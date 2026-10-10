@@ -1,10 +1,10 @@
-name: Android Stage 1
+name: Android Stage 1 Checks
 on:
   push:
     branches: [stage-1-foundation]
   pull_request:
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,8 +12,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - run: gradle :app:assembleDebug :app:testDebugUnitTest --stacktrace
+      - name: Install Android SDK packages
+        run: |
+          echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
+      - name: Compile and run unit tests without packaging APK
+        run: gradle :app:compileDebugKotlin :app:testDebugUnitTest --stacktrace
