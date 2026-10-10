@@ -24,8 +24,10 @@ private val ComponentActivity.ownerStore by preferencesDataStore("owner")
 private val OWNER = stringPreferencesKey("owner_email")
 private val PIN_SALT = stringPreferencesKey("pin_salt")
 private val PIN_HASH = stringPreferencesKey("pin_hash")
+private val FAILURES = androidx.datastore.preferences.core.intPreferencesKey("pin_failures")
+private val LAST_FAILURE = androidx.datastore.preferences.core.longPreferencesKey("pin_last_failure")
 
-private data class OwnerState(val email: String?, val salt: String?, val hash: String?)
+private data class OwnerState(val email: String?, val salt: String?, val hash: String?, val failures: Int, val lastFailure: Long)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,7 +35,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val scope = rememberCoroutineScope()
             val owner by ownerStore.data.map {
-                OwnerState(it[OWNER], it[PIN_SALT], it[PIN_HASH])
+                OwnerState(it[OWNER], it[PIN_SALT], it[PIN_HASH], it[FAILURES] ?: 0, it[LAST_FAILURE] ?: 0L)
             }.collectAsState(initial = null)
             var unlocked by remember { mutableStateOf(false) }
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -54,12 +56,29 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         !unlocked -> OwnerUnlock(
+                            canAttempt = PinThrottle.canTry(owner!!.failures, owner!!.lastFailure, System.currentTimeMillis()),
                             onUnlock = { pin ->
-                                try {
-                                    val ok = OwnerSecurity.verify(pin.toCharArray(), owner!!.salt!!, owner!!.hash!!)
-                                    if (ok) unlocked = true
+                                val now = System.currentTimeMillis()
+                                if (!PinThrottle.canTry(owner!!.failures, owner!!.lastFailure, now)) {
+                                    false
+                                } else {
+                                    val ok = try {
+                                        OwnerSecurity.verify(pin.toCharArray(), owner!!.salt!!, owner!!.hash!!)
+                                    } catch (_: IllegalArgumentException) { false }
+                                    scope.launch {
+                                        ownerStore.edit {
+                                            if (ok) {
+                                                it[FAILURES] = 0
+                                                it[LAST_FAILURE] = 0L
+                                            } else {
+                                                it[FAILURES] = owner!!.failures + 1
+                                                it[LAST_FAILURE] = now
+                                            }
+                                        }
+                                        if (ok) unlocked = true
+                                    }
                                     ok
-                                } catch (_: IllegalArgumentException) { false }
+                                }
                             }
                         )
                         else -> Home(owner!!.email!!)
@@ -105,7 +124,7 @@ private fun OwnerSetup(onConfirm: (String, String) -> Unit) {
 }
 
 @Composable
-private fun OwnerUnlock(onUnlock: (String) -> Boolean) {
+private fun OwnerUnlock(canAttempt: Boolean, onUnlock: (String) -> Boolean) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center,
@@ -116,9 +135,10 @@ private fun OwnerUnlock(onUnlock: (String) -> Boolean) {
             label = { Text("رمز PIN") }, singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword))
-        if (error) Text("رمز PIN غير صحيح", color = MaterialTheme.colorScheme.error)
+        if (!canAttempt) Text("محاولات كثيرة. حاول مجددًا بعد دقيقة.", color = MaterialTheme.colorScheme.error)
+        if (error && canAttempt) Text("رمز PIN غير صحيح", color = MaterialTheme.colorScheme.error)
         Spacer(Modifier.height(12.dp))
-        Button(onClick = { error = !onUnlock(pin); pin = "" }, enabled = pin.length in 6..12) { Text("فتح") }
+        Button(onClick = { error = !onUnlock(pin); pin = "" }, enabled = canAttempt && pin.length in 6..12) { Text("فتح") }
     }
 }
 
