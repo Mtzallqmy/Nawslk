@@ -38,4 +38,24 @@ class BackendClient(private val baseUrl: String = "https://nawslk-api-production
             connection.disconnect()
         }
     }
+
+    suspend fun bootstrap(email: String, secret: String): String = withContext(Dispatchers.IO) {
+        require(secret.length >= 32)
+        val connection = URL("$baseUrl/v1/bootstrap").openConnection() as HttpURLConnection
+        connection.connectTimeout = 7000
+        connection.readTimeout = 7000
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        connection.setRequestProperty("X-Bootstrap-Secret", secret)
+        try {
+            connection.outputStream.use {
+                it.write(JSONObject().put("email", email).toString().toByteArray(Charsets.UTF_8))
+            }
+            if (connection.responseCode != 201) error("Bootstrap failed (HTTP ${connection.responseCode})")
+            JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).getString("token")
+        } finally {
+            connection.disconnect()
+        }
+    }
 }
