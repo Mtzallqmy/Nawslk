@@ -6,6 +6,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nawslk
+          POSTGRES_PASSWORD: local_ci_only
+          POSTGRES_DB: nawslk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nawslk"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -16,3 +30,17 @@ jobs:
           node-version: '22'
       - run: npm install
       - run: npm test
+      - name: Smoke test API with PostgreSQL
+        env:
+          DATABASE_URL: postgresql://nawslk:local_ci_only@localhost:5432/nawslk_test
+          BOOTSTRAP_SECRET_SHA256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+          PORT: '3000'
+        run: |
+          node src/server.mjs > /tmp/nawslk-api.log 2>&1 &
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3000/health > /tmp/health.json; then break; fi
+            sleep 1
+          done
+          grep -q '"database":"connected"' /tmp/health.json
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/v1/me)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/v1/bootstrap -H 'Content-Type: application/json' -d '{"email":"owner@example.com"}')" = "403"
