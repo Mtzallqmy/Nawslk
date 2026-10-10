@@ -19,6 +19,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalContext
 
 private val ComponentActivity.ownerStore by preferencesDataStore("owner")
 private val OWNER = stringPreferencesKey("owner_email")
@@ -198,5 +199,29 @@ private fun SettingsContent(email: String) {
     }
     Text("المالك: $email")
     Text("حالة Railway: $status")
-    Text("ربط حساب المالك بالخادم يتطلب سر التهيئة الخاص ولا يتم تلقائيًا.")
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var secret by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    val savedToken = remember { SecureTokenStore(context).load() }
+    if (savedToken == null) {
+        OutlinedTextField(secret, { secret = it }, label = { Text("سر تهيئة الخادم (مرة واحدة)") },
+            visualTransformation = PasswordVisualTransformation(), singleLine = true)
+        Button(onClick = {
+            scope.launch {
+                message = try {
+                    val token = BackendClient().bootstrap(email, secret)
+                    SecureTokenStore(context).save(token)
+                    secret = ""
+                    "تم ربط المالك بالخادم بنجاح"
+                } catch (_: Exception) {
+                    "تعذر الربط. تحقق من سر التهيئة وإعدادات Railway."
+                }
+            }
+        }, enabled = secret.length >= 32) { Text("ربط الخادم") }
+    } else {
+        Text("يوجد رمز اتصال بالخادم محفوظ بتشفير Android Keystore.")
+    }
+    if (message.isNotEmpty()) Text(message)
+    Text("الربط يتطلب سر تهيئة خاصًا، ولا يعتمد على البريد وحده.")
 }
