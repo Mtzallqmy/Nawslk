@@ -18,7 +18,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private val ComponentActivity.ownerStore by preferencesDataStore("owner")
@@ -35,12 +34,13 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             val owner by ownerStore.data.map {
                 OwnerState(it[OWNER], it[PIN_SALT], it[PIN_HASH])
-            }.collectAsState(initial = OwnerState(null, null, null))
+            }.collectAsState(initial = null)
             var unlocked by remember { mutableStateOf(false) }
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                 MaterialTheme {
                     when {
-                        owner.email == null || owner.salt == null || owner.hash == null ->
+                        owner == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                        owner!!.email == null || owner!!.salt == null || owner!!.hash == null ->
                             OwnerSetup { email, pin ->
                                 val salt = OwnerSecurity.newSalt()
                                 val hash = OwnerSecurity.derive(pin.toCharArray(), salt)
@@ -56,13 +56,13 @@ class MainActivity : ComponentActivity() {
                         !unlocked -> OwnerUnlock(
                             onUnlock = { pin ->
                                 try {
-                                    val ok = OwnerSecurity.verify(pin.toCharArray(), owner.salt!!, owner.hash!!)
+                                    val ok = OwnerSecurity.verify(pin.toCharArray(), owner!!.salt!!, owner!!.hash!!)
                                     if (ok) unlocked = true
                                     ok
                                 } catch (_: IllegalArgumentException) { false }
                             }
                         )
-                        else -> Home(owner.email)
+                        else -> Home(owner!!.email!!)
                     }
                 }
             }
