@@ -147,6 +147,7 @@ private fun OwnerUnlock(canAttempt: Boolean, onUnlock: (String) -> Boolean) {
 
 @Composable
 private fun Home(email: String) {
+    val context = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
     val tabs = listOf("الرئيسية", "الاتصال", "الرسائل", "الأرقام", "حسابي")
     Scaffold(
