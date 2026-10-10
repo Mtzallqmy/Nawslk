@@ -20,6 +20,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
+import com.nawslk.app.calls.CallScreen
+import com.nawslk.app.calls.CallHistoryStore
 
 private val ComponentActivity.ownerStore by preferencesDataStore("owner")
 private val OWNER = stringPreferencesKey("owner_email")
@@ -164,7 +166,7 @@ private fun Home(email: String) {
             Text(tabs[tab], style = MaterialTheme.typography.headlineMedium)
             when (tab) {
                 0 -> Text("مرحبًا بك في نوصلك. المكالمات والرسائل الحقيقية غير مفعّلة بعد.")
-                1 -> Dialer()
+                1 -> CallScreen(remember { CallHistoryStore(context) })
                 2 -> Text("الرسائل: سيتم ربط مزود SMS في مرحلة لاحقة.")
                 3 -> Text("الأرقام: ستظهر الأرقام الفعلية بعد ربط مزود الاتصالات.")
                 else -> SettingsContent(email)
