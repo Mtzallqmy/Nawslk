@@ -18,6 +18,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private val ComponentActivity.ownerStore by preferencesDataStore("owner")
@@ -55,7 +56,7 @@ class MainActivity : ComponentActivity() {
                         !unlocked -> OwnerUnlock(
                             onUnlock = { pin ->
                                 try {
-                                    val ok = OwnerSecurity.verify(pin.toCharArray(), owner.salt, owner.hash)
+                                    val ok = OwnerSecurity.verify(pin.toCharArray(), owner.salt!!, owner.hash!!)
                                     if (ok) unlocked = true
                                     ok
                                 } catch (_: IllegalArgumentException) { false }
