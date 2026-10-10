@@ -166,7 +166,7 @@ private fun Home(email: String) {
                 1 -> Dialer()
                 2 -> Text("الرسائل: سيتم ربط مزود SMS في مرحلة لاحقة.")
                 3 -> Text("الأرقام: ستظهر الأرقام الفعلية بعد ربط مزود الاتصالات.")
-                else -> Text("المالك: $email\nلا يوجد نظام دفع أو تسجيل دخول.")
+                else -> SettingsContent(email)
             }
         }
     }
@@ -186,4 +186,17 @@ private fun Dialer() {
         }
     }
     Button(onClick = {}, enabled = false) { Text("اتصال — يتطلب ربط مزود") }
+}
+
+@Composable
+private fun SettingsContent(email: String) {
+    var status by remember { mutableStateOf("جارٍ فحص اتصال الخادم…") }
+    LaunchedEffect(Unit) {
+        status = try {
+            if (BackendClient().health()) "الخادم وقاعدة البيانات متصلان" else "الخادم غير جاهز"
+        } catch (_: Exception) { "لا يتوفر اتصال بالخادم — الميزات المحلية تعمل" }
+    }
+    Text("المالك: $email")
+    Text("حالة Railway: $status")
+    Text("ربط حساب المالك بالخادم يتطلب سر التهيئة الخاص ولا يتم تلقائيًا.")
 }
