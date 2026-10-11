@@ -1,7 +1,7 @@
 name: Backend Stage 2 Checks
 on:
   push:
-    branches: [stage-2-backend-railway]
+    branches: [stage-2-backend-railway, stage-3-calling-webrtc]
   pull_request:
 jobs:
   test:
