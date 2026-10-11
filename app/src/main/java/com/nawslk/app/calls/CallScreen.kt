@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
 fun CallScreen(store: CallHistoryStore) {
     var peer by remember { mutableStateOf("") }
     var history by remember { mutableStateOf(store.read()) }
+    val coordinator = remember { CallCoordinator() }
     var activeId by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -19,11 +20,7 @@ fun CallScreen(store: CallHistoryStore) {
         Text("هذا وضع محلي تجريبي، ولا يجري اتصالًا حقيقيًا.", style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(peer, { peer = it }, label = { Text("جهة الاتصال") }, singleLine = true)
         Button(onClick = {
-            val session = CallSession(
-                java.util.UUID.randomUUID().toString(), peer.trim(),
-                CallDirection.OUTGOING, CallTransport.DEMO,
-                CallStatus.CONNECTING, System.currentTimeMillis()
-            )
+            val session = coordinator.startDemo(peer)
             history = listOf(session) + history
             activeId = session.id
             store.save(history)
@@ -32,7 +29,7 @@ fun CallScreen(store: CallHistoryStore) {
         if (activeId != null) {
             Button(onClick = {
                 history = history.map {
-                    if (it.id == activeId) CallStateMachine.transition(it, CallStatus.ENDED, System.currentTimeMillis())
+                    if (it.id == activeId) coordinator.hangUp()
                     else it
                 }
                 store.save(history)
