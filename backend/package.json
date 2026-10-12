@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test test/*.test.mjs",
-    "test:webrtc": "node test/webrtc-audio.mjs"
+    "test:webrtc": "node test/webrtc-audio.mjs",
+    "probe:turn": "node scripts/probe-turn.mjs"
   },
   "engines": {
     "node": ">=22"

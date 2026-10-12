@@ -67,6 +67,12 @@ jobs:
           TEST_DATABASE_URL: postgresql://nawslk:local_ci_only@localhost:5432/nawslk_test
           TEST_TURN_URL: turn:127.0.0.1:3478?transport=udp
           TEST_TURN_SHARED_SECRET: ephemeral_ci_turn_sharedsecret
+      - name: Test standalone production TURN probe against disposable relay
+        run: npm run probe:turn
+        timeout-minutes: 2
+        env:
+          TURN_URLS: turn:127.0.0.1:3478?transport=udp
+          TURN_SHARED_SECRET: ephemeral_ci_turn_sharedsecret
       - name: Clean up disposable TURN
         if: always()
         run: docker rm -f nawslk-ci-turn || true
