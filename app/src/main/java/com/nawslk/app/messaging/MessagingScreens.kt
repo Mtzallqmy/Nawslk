@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.nawslk.app.SecureTokenStore
 import com.nawslk.app.calls.SignalingClient
@@ -113,7 +114,7 @@ private fun ColumnScope.ConversationScreen(repository: MessagesRepository,id: St
     }
     OutlinedTextField(text,{value ->
         if(value.codePointCount(0,value.length)<=1600) {text=value;DraftSaver.save(repository,id,value)}
-    },label={Text("اكتب رسالة — تُحفظ كمسودة")},modifier=Modifier.fillMaxWidth(),enabled=loaded && !queueing)
+    },label={Text("اكتب رسالة — تُحفظ كمسودة")},modifier=Modifier.fillMaxWidth().testTag("message_draft"),enabled=loaded && !queueing)
     Row {
         Button(onClick={scope.launch {queueing=true;try {DraftSaver.flush(repository,id);repository.queue(id,text);text="";onNotice("حُفظت في الانتظار. اضغط المزامنة للإرسال التجريبي.")}catch(_:Exception){onNotice("تعذر حفظ الرسالة.")}finally{queueing=false}}},enabled=!queueing && MessageRules.validBody(text)){Text("حفظ في قائمة الانتظار")}
         TextButton(onClick={scope.launch {repository.delete(id);onDeleted();onNotice("حُذف السجل المحلي فقط. استخدم حذف الخادم لإزالة نسخته.")}}){Text("حذف محلي")}
