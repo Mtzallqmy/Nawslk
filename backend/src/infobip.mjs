@@ -73,6 +73,8 @@ export class InfobipProviderAdapter {
     if(!c)throw fail('infobip_not_configured',503);
     if(!c.smsEnabled || !c.numbers.includes(to) || consent!==true)throw fail('infobip_test_not_approved',403);
     if(!validE164(to) || !validMessageBody(text))throw fail('invalid_message');
+    // A consented operator test must not silently turn into many billable segments.
+    if(text.length>70)throw fail('infobip_test_text_too_long');
     if(!/^[A-Za-z0-9+ -]{1,32}$/.test(c.sender) || c.webhookKey.length<32 || !/^https:\/\/[a-z0-9.-]+\/v1\/providers\/infobip\/delivery$/.test(c.webhookUrl))throw fail('infobip_delivery_not_configured',503);
   }
   async sendSms(input) {

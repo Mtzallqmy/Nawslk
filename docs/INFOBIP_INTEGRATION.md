@@ -27,7 +27,7 @@ For an explicitly approved future SMS test only:
 | INFOBIP_WEBHOOK_SECRET | At least 32 characters, same signing key in Infobip HMAC-SHA256 authentication settings |
 | INFOBIP_SMS_WEBHOOK_URL | `https://nawslk-api-production.up.railway.app/v1/providers/infobip/delivery`; matching standalone notification profile must apply signing |
 
-The adapter does not create subscriptions, provision numbers or enable paid service automatically. A live HMAC callback must be tested before enabling ongoing real traffic. Raw message IDs/destinations remain in private database rows, not application logs. No API key is stored in PostgreSQL or sent to Android.
+The adapter does not create subscriptions, provision numbers or enable paid service automatically. Test text is capped at 70 UTF-16 units to prevent a long Unicode test from becoming many billed segments. Eligibility for a free trial or any paid consumption must still be explicitly approved; the presence of a key does not grant that approval. A live HMAC callback must be tested before enabling ongoing real traffic. Raw message IDs/destinations remain in private database rows, not application logs. No API key is stored in PostgreSQL or sent to Android.
 
 ## RTC SDK compatibility gate
 

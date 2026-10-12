@@ -35,6 +35,7 @@ test('SMS requires explicit deployment approval, target allowlist and request co
     }});
     await assert.rejects(live.sms.send({id,to:'+15550000002',text:'fixture',consent:true}));
     await assert.rejects(live.sms.send({id,to:'+15550000001',text:'fixture',consent:false}));
+    await assert.rejects(live.sms.send({id,to:'+15550000001',text:'ع'.repeat(71),consent:true}),/infobip_test_text_too_long/);
     assert.equal((await live.sms.send({id,to:'+15550000001',text:'fixture',consent:true})).status,'ACCEPTED');assert.equal(calls,1);
 });
 test('Infobip HMAC authenticates exact body and delivery classification is conservative',()=>{
