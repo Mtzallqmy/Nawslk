@@ -24,7 +24,7 @@ Preserved Stage 1 local owner/PIN/DataStore and Stage 2 owner bootstrap/PostgreS
 | Android microphone / mute / cleanup | Implemented; physical runtime test pending |
 | Active foreground service / interruption / Bluetooth | Implemented; Android 8–15+ device matrix pending |
 | Network loss / recovery | Bounded retries and timeout implemented; external network handover/ICE restart not verified |
-| Incoming call UI / notification | Foreground polling implemented; killed/idle app push delivery pending |
+| Incoming call UI / notification | FCM sender/receiver, registration and outbox implemented; live configuration/delivery verification pending |
 | Local call history | Metadata save/load implemented; device validation pending |
 | TURN across independent networks | Unconfigured; endpoint returns 503 rather than claiming STUN guarantees |
 | PSTN | Separate unconfigured provider interface; no ordinary-number calling claim |
@@ -32,6 +32,6 @@ Preserved Stage 1 local owner/PIN/DataStore and Stage 2 owner bootstrap/PostgreS
 
 ## Required next inputs and tests
 
-An approved TURN deployment/provider with `TURN_URLS` and coturn-compatible `TURN_SHARED_SECRET` is needed. No TURN host or account was invented. A Firebase/FCM project or another approved push integration is needed to implement wake-up delivery with Android restrictions. Do not paste long-term secrets into source or reports.
+An approved TURN deployment/provider with `TURN_URLS` and coturn-compatible `TURN_SHARED_SECRET` is needed. No TURN host or account was invented. A Firebase/FCM project configuration and scoped service-account credentials are needed to activate and verify the implemented push path. Do not paste long-term secrets into source or reports.
 
 Once configured, authorize two devices via a one-use invite; test accept/reject/hangup/mute on independent networks, verify no microphone use after cancellation (including hangup during accept), check live history, wired/Bluetooth routing, phone interruption, app background, notification denial and process death on Android API 26 and 35+. These tests cannot be replaced by successful compilation or Chromium tone transport.

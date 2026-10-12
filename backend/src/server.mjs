@@ -147,7 +147,8 @@ const server = http.createServer(async (req, res) => {
         if (!urls.length || !process.env.TURN_SHARED_SECRET) return send(res,503,{error:'turn_not_configured'});
         const username = `${Math.floor(Date.now()/1000)+3600}:${owner.id}`;
         const credential = createHmac('sha1',process.env.TURN_SHARED_SECRET).update(username).digest('base64');
-        return send(res,200,{iceServers:[{urls,username,credential}],expiresInSeconds:3600});
+        const stun=(process.env.STUN_URLS || '').split(',').map(s=>s.trim()).filter(s=>/^stuns?:[^\s]+$/.test(s));
+        return send(res,200,{iceServers:[{urls,username,credential},...(stun.length ? [{urls:stun}] : [])],expiresInSeconds:3600});
       }
       if (req.method === 'POST' && path === '/v1/calls/sessions') {
         const { peerId } = await readBody(req);

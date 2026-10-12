@@ -11,6 +11,7 @@ Android Kotlin/Compose RTL owner setup, PIN/PBKDF2/throttling, DataStore, Keysto
 - One-use trusted-device invitations, device identity separate from owner account, owner-only management, revocation and scoped participant access.
 - Transactional call concurrency, callee accept/reject, session expiry/heartbeat, constrained SDP/ICE, replay IDs, request and message limits.
 - Audio-only WebRTC SDK `io.github.webrtc-sdk:android:125.6422.07` (Maven Central; BSD upstream licensing). No video, recording, or PSTN transport. See https://github.com/webrtc-sdk/android and its LICENSE.
+- Authenticated FCM HTTP v1 sender, encrypted device push registrations, transactional call outbox, bounded delivery retry, Android FirebaseMessagingService, and notification entry after process restart. No microphone starts from push.
 - Process-wide Android call runtime, real PeerConnection negotiation, ICE buffering, serialized outbound signaling with stable retry IDs, mute, speaker and connected-headset route controls.
 - User-granted microphone access; foreground microphone service with persistent notification and hang-up action. Media resources are released before network shutdown. Audio-focus interruption ends the call; no phone-state permission requested.
 - Arabic RTL incoming/ringing/connecting/active UI, separate preserved demo screen, readable failures, local history with peer/direction/time/connected duration/status/reason. History retains 100 entries in the existing JSON store; Room would add a second storage migration without current query/sync needs.
@@ -33,4 +34,6 @@ Existing Railway project/environment/API/PostgreSQL reused. The original deploym
 
 ## Gate still open
 
-TURN credentials/infrastructure are missing. Incoming wake-up/push delivery for an idle/killed application is not implemented. A browser CI tone test does not prove Android microphones, speaker/Bluetooth, real network handover, or receiving under Android background restrictions. Stage 3 remains IN PROGRESS until those items and the acceptance matrix are verified. CI compilation deliberately does not package an APK.
+TURN credentials/infrastructure are missing. FCM incoming push delivery and registration/outbox are implemented but are not activated or verified in production; Firebase credentials/configuration are absent. A browser CI tone test does not prove Android microphones, speaker/Bluetooth, real network handover, or receiving under Android background restrictions. Stage 3 remains IN PROGRESS until those items and the acceptance matrix are verified. CI compilation deliberately does not package an APK.
+
+See [production setup](STAGE_3_PRODUCTION_SETUP.md) for required external settings and the distinction between CI TURN/push tests and production activation.

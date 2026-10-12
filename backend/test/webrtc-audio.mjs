@@ -1,7 +1,7 @@
 // Explicit integration command, separate from unit tests. Uses a disposable PostgreSQL DB.
 // A generated tone crosses DTLS-SRTP between two isolated browser contexts.
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { hashSecret } from '../src/auth.mjs';
@@ -10,8 +10,15 @@ const db = new Pool({connectionString:process.env.TEST_DATABASE_URL});
 assert.ok(process.env.TEST_DATABASE_URL,'Disposable TEST_DATABASE_URL is required');
 await db.query('DROP TABLE IF EXISTS call_push_outbox,device_push_tokens,signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
 const secret='webrtc-integration-bootstrap-secret';
-const child=spawn(process.execPath,['src/server.mjs'],{env:{...process.env,DATABASE_URL:process.env.TEST_DATABASE_URL,BOOTSTRAP_SECRET:secret,BOOTSTRAP_SECRET_SHA256:hashSecret(secret),PORT:'3100'},stdio:'ignore'});
+const child=spawn(process.execPath,['src/server.mjs'],{env:{...process.env,DATABASE_URL:process.env.TEST_DATABASE_URL,BOOTSTRAP_SECRET:secret,BOOTSTRAP_SECRET_SHA256:hashSecret(secret),PORT:'3100',TURN_URLS:process.env.TEST_TURN_URL || '',TURN_SHARED_SECRET:process.env.TEST_TURN_SHARED_SECRET || ''},stdio:'ignore'});
 let browser;
+let packetLossActive=false;
+const packetRule=['OUTPUT','-p','udp','--dport','1024:65535','-m','comment','--comment','nawslk-ci-media','-j','DROP'];
+function networkLoss(enabled) {
+ assert.equal(process.env.CI,'true','Network fault injection is restricted to disposable CI runners');
+ execFileSync('sudo',['iptables',enabled?'-I':'-D',...packetRule],{timeout:10000,stdio:'pipe'});
+ packetLossActive=enabled;
+}
 const api=async(path,token,method='GET',body,bootstrap)=>{
  const res=await fetch('http://127.0.0.1:3100'+path,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...(bootstrap?{'x-bootstrap-secret':secret}:{})},body:body?JSON.stringify(body):undefined});
  const data=await res.json(); assert.ok(res.ok,`${method} ${path}: HTTP ${res.status}`); return data;
@@ -27,11 +34,10 @@ try {
  await api(path+'/accept',peer.token,'POST');
  browser=await chromium.launch({args:['--autoplay-policy=no-user-gesture-required']});
  const a=await browser.newPage(),b=await browser.newPage();
+ const relayConfig=process.env.TEST_TURN_URL ? {iceTransportPolicy:'relay',iceServers:(await api('/v1/calls/ice-config',owner.token)).iceServers} : {};
  for(const page of [a,b]) {
   await page.goto('http://127.0.0.1:3100/health');
-  await page.evaluate(config=>{window.rtcConfig=config;},process.env.TEST_TURN_URL ? {
-   iceTransportPolicy:'relay',iceServers:[{urls:[process.env.TEST_TURN_URL],username:process.env.TEST_TURN_USERNAME,credential:process.env.TEST_TURN_PASSWORD}]
-  } : {});
+  await page.evaluate(config=>{window.rtcConfig=config;},relayConfig);
   await page.evaluate(async()=>{
    window.pc=new RTCPeerConnection(window.rtcConfig); window.ice=[];
    window.pc.onicecandidate=e=>{if(e.candidate)window.ice.push(e.candidate.toJSON());};
@@ -82,13 +88,11 @@ try {
  await a.evaluate(()=>{window.track.enabled=true;});
  await wait(async()=>await energy(b)>50,'unmute restores remote audio');
  const packetCount=page=>page.evaluate(async()=>[...(await window.pc.getStats()).values()].filter(s=>s.type==='inbound-rtp' && s.kind==='audio').reduce((sum,s)=>sum+s.packetsReceived,0));
- const clients=await Promise.all([a.context().newCDPSession(a),b.context().newCDPSession(b)]);
- const conditions={offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1};
- for(const client of clients) await client.send('Network.emulateNetworkConditions',{...conditions,packetLoss:100});
- await wait(async()=>await energy(b)<10,'packet loss silences incoming audio');
+ networkLoss(true);
+ await new Promise(r=>setTimeout(r,1500));
  const stopped=await packetCount(b); await new Promise(r=>setTimeout(r,1000));
  assert.ok(await packetCount(b)-stopped<=2,'RTP must stop during the network blackhole');
- for(const client of clients) await client.send('Network.emulateNetworkConditions',{...conditions,packetLoss:0});
+ networkLoss(false);
  await wait(async()=>await energy(b)>50 && await packetCount(b)>stopped+10,'audio recovers after network restoration');
  if(process.env.TEST_TURN_URL) for(const page of [a,b]) {
   assert.ok(await page.evaluate(async()=>[...(await window.pc.getStats()).values()].some(s=>s.type==='local-candidate' && s.candidateType==='relay')),'Forced TURN relay candidate');
@@ -108,5 +112,6 @@ try {
  }
  throw error;
 } finally {
+ if(packetLossActive) networkLoss(false);
  await browser?.close(); child.kill('SIGTERM'); if(child.exitCode===null) await new Promise(r=>child.once('exit',r)); await db.end();
 }
