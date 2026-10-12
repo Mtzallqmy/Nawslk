@@ -6,7 +6,7 @@ export async function migrateMessaging(pool) {
  return transaction(pool,async db=>{
   await db.query("SELECT pg_advisory_xact_lock(hashtextextended('nawslk-schema-migrations',0))");
   await db.query('CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL,applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
-  for(const [version,name] of [[1,'001_messaging.sql'],[2,'002_delivery_events.sql']]) {
+  for(const [version,name] of [[1,'001_messaging.sql'],[2,'002_delivery_events.sql'],[3,'003_infobip.sql']]) {
    const sql=await readFile(new URL('./migrations/'+name,import.meta.url),'utf8');
    const checksum=createHash('sha256').update(sql).digest('hex');
    const old=await db.query('SELECT checksum FROM schema_migrations WHERE version=$1',[version]);

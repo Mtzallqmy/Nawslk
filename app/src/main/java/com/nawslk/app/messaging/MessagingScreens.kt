@@ -138,6 +138,14 @@ private fun ColumnScope.ConversationScreen(repository: MessagesRepository,id: St
 
 @Composable
 fun NumbersScreen() {
+    var providerTest by remember {mutableStateOf(false)}
+    if(providerTest) {
+        Column(Modifier.fillMaxSize()) {
+            TextButton(onClick={providerTest=false}){Text("العودة إلى الأرقام")}
+            Box(Modifier.weight(1f)){InfobipScreen()}
+        }
+        return
+    }
     val context=LocalContext.current
     val scope=rememberCoroutineScope()
     val client=remember {SignalingClient({SecureTokenStore(context).load()})}
@@ -156,6 +164,7 @@ fun NumbersScreen() {
     LaunchedEffect(Unit){refresh()}
     Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
         Text("أرقامي",style=MaterialTheme.typography.titleLarge)
+        TextButton(onClick={providerTest=true}){Text("حالة Infobip واختباره")}
         Text(status)
         OutlinedButton(onClick={scope.launch {refresh()}},enabled=!loading){Text("تحديث")}
         LazyColumn {

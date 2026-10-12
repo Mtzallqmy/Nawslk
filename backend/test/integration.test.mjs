@@ -6,11 +6,13 @@ import { hashSecret } from '../src/auth.mjs';
 import { randomUUID, createHmac } from 'node:crypto';
 import { migrateMessaging, encryptMessage } from '../src/messaging.mjs';
 import { dispatchPush, decryptPushToken } from '../src/push.mjs';
+import { InfobipProviderAdapter, infobipConfiguration } from '../src/infobip.mjs';
+import { runSmsTest, receiveInfobipDelivery, recordCheck } from '../src/infobip-store.mjs';
 const database = process.env.TEST_DATABASE_URL;
 test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocation', {skip: !database, timeout: 30000}, async () => {
   // Only an explicitly provided disposable database may be used by this suite.
   const db = new Pool({connectionString:database});
-  await db.query('DROP TABLE IF EXISTS delivery_events,webhook_nonces,messages,conversations,number_events,number_assignments,virtual_numbers,provider_accounts,schema_migrations,call_push_outbox,device_push_tokens,signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
+  await db.query('DROP TABLE IF EXISTS provider_receipts,provider_operations,provider_checks,delivery_events,webhook_nonces,messages,conversations,number_events,number_assignments,virtual_numbers,provider_accounts,schema_migrations,call_push_outbox,device_push_tokens,signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
   const secret = 'integration-only-bootstrap-secret-32-bytes';
   const child = spawn(process.execPath,['src/server.mjs'],{env:{...process.env,DATABASE_URL:database,BOOTSTRAP_SECRET:secret,BOOTSTRAP_SECRET_SHA256:hashSecret(secret),PORT:'3099',NODE_ENV:'test',WEBHOOK_TEST_SECRET:'integration-webhook-secret'},stdio:'ignore'});
   const api = async (path,{token,body,method='GET',bootstrap}={}) => {
@@ -27,11 +29,16 @@ test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocatio
     assert.deepEqual(results.map(r=>r.status).sort(),[201,409]);
     const owner=results.find(r=>r.status===201).body;
     assert.equal((await api('/v1/me',{token:owner.token})).body.isOwner,true);
+    assert.equal((await api('/v1/providers/infobip/status')).status,401);
+    assert.equal((await api('/v1/providers/infobip/status',{token:owner.token})).body.configured,false);
+    assert.equal((await api('/v1/providers/infobip/check',{method:'POST',token:owner.token})).status,503);
+    assert.equal((await api('/v1/providers/infobip/sms-tests',{method:'POST',token:owner.token,body:{id:randomUUID(),to:'+15550000001',text:'fixture',consent:true}})).status,503);
     const invitation=await api('/v1/devices/invites',{method:'POST',token:owner.token});
     const redemption={method:'POST',body:{invite:invitation.body.invite,label:'phone 2'}};
     const redeemed=await Promise.all([api('/v1/devices/redeem',redemption),api('/v1/devices/redeem',redemption)]);
     assert.deepEqual(redeemed.map(r=>r.status).sort(),[201,400]);
     const peer=redeemed.find(r=>r.status===201).body;
+    assert.equal((await api('/v1/providers/infobip/check',{method:'POST',token:peer.token})).status,403);
     assert.equal((await api('/v1/devices/invites',{method:'POST',token:peer.token})).status,403);
     const otherInvite=await api('/v1/devices/invites',{method:'POST',token:owner.token});
     const other=(await api('/v1/devices/redeem',{method:'POST',body:{invite:otherInvite.body.invite,label:'phone 3'}})).body;
@@ -140,5 +147,40 @@ test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocatio
     const conversationPage=(await api('/v1/conversations',{token:owner.token})).body;assert.equal(conversationPage.conversations.length,50);
     const conversationLast=(await api('/v1/conversations?before='+conversationPage.nextCursor,{token:owner.token})).body;assert.equal(conversationLast.conversations.length,5);
     assert.equal(new Set([...conversationPage.conversations,...conversationLast.conversations].map(c=>c.id)).size,55);
+    // Real PostgreSQL persistence with fixture-only provider HTTP. No external SMS.
+    {
+    const hookKey='integration-only-infobip-hook-key-32-bytes';
+    let sends=0;
+    const adapter=new InfobipProviderAdapter(infobipConfiguration({INFOBIP_API_KEY:'fixture-only-api-key',INFOBIP_SMS_TEST_ENABLED:'true',INFOBIP_APPROVED_TEST_NUMBERS:'+15550000001',INFOBIP_SMS_SENDER:'ServiceSMS',INFOBIP_WEBHOOK_SECRET:hookKey,INFOBIP_SMS_WEBHOOK_URL:'https://nawslk-api-production.up.railway.app/v1/providers/infobip/delivery'}),{fetcher:async(_url,options)=>{
+      sends++;const id=JSON.parse(options.body).messages[0].destinations[0].messageId;
+      return Response.json({messages:[{messageId:id,status:{groupId:1}}]});
+    }});
+    const actor={owner_id:owner.deviceId,is_owner:true};
+    const input={id:randomUUID(),to:'+15550000001',text:'fixture private SMS',consent:true};
+    const sent=await Promise.all([runSmsTest(db,actor,input,adapter,secret),runSmsTest(db,actor,input,adapter,secret)]);
+    assert.equal(sends,1);assert.ok(sent.some(r=>r.status==='ACCEPTED'));
+    assert.ok(!(await db.query('SELECT ciphertext FROM provider_operations WHERE id=$1',[input.id])).rows[0].ciphertext.includes(input.text));
+    await assert.rejects(runSmsTest(db,actor,{...input,text:'altered'},adapter,secret),/idempotency_conflict/);
+    await assert.rejects(runSmsTest(db,{owner_id:randomUUID(),is_owner:true},input,adapter,secret),/idempotency_conflict/);
+    await assert.rejects(runSmsTest(db,actor,{...input,id:randomUUID()},adapter,secret),/infobip_daily_test_limit/);
+    const event={results:[{messageId:input.id,status:{groupId:3},doneAt:new Date().toISOString()}]};
+    const raw=Buffer.from(JSON.stringify(event));const signature=createHmac('sha256',hookKey).update(raw).digest('hex');
+    await assert.rejects(receiveInfobipDelivery(db,raw,'invalid',hookKey),/invalid_webhook_signature/);
+    await receiveInfobipDelivery(db,raw,signature,hookKey);await receiveInfobipDelivery(db,raw,signature,hookKey);
+    assert.equal((await db.query('SELECT COUNT(*)::int AS n FROM provider_receipts WHERE operation_id=$1',[input.id])).rows[0].n,1);
+    assert.equal((await db.query('SELECT status FROM provider_operations WHERE id=$1',[input.id])).rows[0].status,'DELIVERED');
+    const late=Buffer.from(JSON.stringify({results:[{messageId:input.id,status:{groupId:1},sentAt:new Date().toISOString()}]}));
+    await receiveInfobipDelivery(db,late,createHmac('sha256',hookKey).update(late).digest('hex'),hookKey);
+    assert.equal((await db.query('SELECT status FROM provider_operations WHERE id=$1',[input.id])).rows[0].status,'DELIVERED');
+    const failureOwner=randomUUID();
+    await db.query("INSERT INTO owner_device(id,email,token_hash) VALUES($1,'fixture-failure@example.com',$2)",[failureOwner,hashSecret('fixture-token')]);
+    const failedInput={...input,id:randomUUID()};
+    const ambiguous=new InfobipProviderAdapter(adapter.config,{fetcher:async()=>{throw new Error('lost response');}});
+    const failedActor={owner_id:failureOwner,is_owner:true};
+    assert.equal((await runSmsTest(db,failedActor,failedInput,ambiguous,secret)).status,'UNKNOWN');
+    assert.equal((await runSmsTest(db,failedActor,failedInput,adapter,secret)).status,'UNKNOWN');assert.equal(sends,1);
+    await recordCheck(db,actor,{authentication:'UNKNOWN'});
+    assert.equal((await db.query("SELECT result FROM provider_checks WHERE owner_id=$1 AND provider_key='infobip'",[owner.deviceId])).rows[0].result.authentication,'UNKNOWN');
+    }
   } finally { child.kill('SIGTERM'); if(child.exitCode===null) await new Promise(r=>child.once('exit',r)); await db.end(); }
 });

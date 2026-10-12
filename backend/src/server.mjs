@@ -1,4 +1,6 @@
 import http from 'node:http';
+import { InfobipProviderAdapter, infobipConfiguration } from './infobip.mjs';
+import { infobipStatus, recordCheck, runSmsTest, receiveInfobipDelivery, publicOperation } from './infobip-store.mjs';
 import { iceConfiguration, IceProvider } from './ice.mjs';
 import { migrateMessaging, createConversation, listConversations, listMessages, sendMessage, listNumbers, applyWebhook } from './messaging.mjs';
 import { ensurePushSchema, registerPushToken, pushConfiguration, FcmSender, dispatchPush } from './push.mjs';
@@ -27,6 +29,7 @@ await migrateMessaging(pool);
 const pushConfig=pushConfiguration();
 const iceConfig=iceConfiguration();
 const iceProvider=new IceProvider(iceConfig);
+const infobip=new InfobipProviderAdapter(infobipConfiguration());
 const pushSender=pushConfig ? new FcmSender(pushConfig) : null;
 let pushing=false;
 const pushWorker=setInterval(async()=>{
@@ -39,6 +42,7 @@ const pushWorker=setInterval(async()=>{
 const authLimit = new RateLimiter({ max: 10 });
 const requestLimit = new RateLimiter({ max: 240 });
 const cleanup = setInterval(() => {
+  pool.query("UPDATE provider_operations SET status='UNKNOWN',failure_code='PROCESS_OUTCOME_UNKNOWN',updated_at=NOW() WHERE status='SENDING' AND created_at<NOW()-INTERVAL '2 minutes'").catch(()=>{});
   pool.query("DELETE FROM signaling_sessions WHERE expires_at < NOW() - INTERVAL '1 day'").catch(() => {});
   pool.query("DELETE FROM messages WHERE created_at < NOW()-INTERVAL '90 days' AND status IN ('SENT','DELIVERED','FAILED','RECEIVED')").catch(() => {});
   pool.query('DELETE FROM webhook_nonces WHERE expires_at<NOW()').catch(() => {});
@@ -48,20 +52,27 @@ async function send(res, status, data) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(data));
 }
-async function readBody(req) {
+async function readRawBody(req) {
   const chunks=[];let bytes=0;
   for await (const chunk of req) {
     bytes+=chunk.length;
     if(bytes>24576)throw new Error('body_too_large');
     chunks.push(chunk);
   }
-  const parsed=JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+  return Buffer.concat(chunks);
+}
+async function readBody(req) {
+  const parsed=JSON.parse((await readRawBody(req)).toString('utf8') || '{}');
   if(!parsed || typeof parsed!=='object' || Array.isArray(parsed))throw new SyntaxError('invalid_json_object');
   return parsed;
 }
 const server = http.createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
+    if(req.method==='POST' && path==='/v1/providers/infobip/delivery') {
+      if(!authLimit.allow(req.socket.remoteAddress || 'ingress'))return send(res,429,{error:'rate_limited'});
+      return send(res,200,await receiveInfobipDelivery(pool,await readRawBody(req),req.headers['x-hub-signature'],infobip.config?.webhookKey));
+    }
     const publicAuth = path === '/v1/bootstrap' || path === '/v1/devices/redeem';
     // Socket identity cannot be spoofed via arbitrary Forwarded headers. A shared ingress
     // bucket may be restrictive behind Railway; identity limiter is separate after auth.
@@ -111,6 +122,18 @@ const server = http.createServer(async (req, res) => {
       const owner = await authenticate(pool,bearer(req.headers.authorization));
       if (!owner) return send(res,401,{error:'unauthorized'});
       if (!requestLimit.allow(owner.id)) return send(res,429,{error:'rate_limited'});
+      if(req.method==='GET' && path==='/v1/providers/infobip/status')return send(res,200,await infobipStatus(pool,owner,infobip));
+      if(req.method==='POST' && path==='/v1/providers/infobip/check') {
+        if(!owner.is_owner)return send(res,403,{error:'forbidden'});
+        if(!infobip.config)return send(res,503,{error:'infobip_not_configured'});
+        if(!authLimit.allow('infobip-check:'+owner.id))return send(res,429,{error:'rate_limited'});
+        return send(res,200,await recordCheck(pool,owner,await infobip.checkReadAccess()));
+      }
+      if(req.method==='POST' && path==='/v1/providers/infobip/sms-tests')return send(res,200,await runSmsTest(pool,owner,await readBody(req),infobip,process.env.BOOTSTRAP_SECRET));
+      if(req.method==='GET' && path==='/v1/providers/infobip/operations') {
+        const rows=await pool.query("SELECT * FROM provider_operations WHERE owner_id=$1 AND provider_key='infobip' ORDER BY created_at DESC LIMIT 20",[owner.owner_id]);
+        return send(res,200,{operations:rows.rows.map(publicOperation)});
+      }
       const participantId = owner.id;
       if(req.method==='GET' && path==='/v1/numbers') return send(res,200,await listNumbers(pool,owner));
       if(req.method==='GET' && path==='/v1/conversations') return send(res,200,await listConversations(pool,owner,new URL(req.url,'http://localhost').searchParams.get('before') || '0'));
@@ -215,6 +238,7 @@ const server = http.createServer(async (req, res) => {
     }
     return send(res, 404, { error: 'not_found' });
   } catch (error) {
+    if(error.message?.startsWith('infobip_'))return send(res,error.status || 503,{error:error.message});
     if (error.message === 'body_too_large') return send(res, 413, { error: 'body_too_large' });
     if (error instanceof SyntaxError) return send(res, 400, { error: 'invalid_json' });
     if(['invalid_message','invalid_conversation','invalid_cursor','invalid_webhook'].includes(error.message))return send(res,400,{error:error.message});
