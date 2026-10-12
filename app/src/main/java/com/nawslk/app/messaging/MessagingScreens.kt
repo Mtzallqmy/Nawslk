@@ -23,13 +23,14 @@ fun MessagesScreen(localOwner: String) {
     val scope=rememberCoroutineScope()
     val client=remember { SignalingClient({SecureTokenStore(context).load()}) }
     val scopePrefs=remember {context.getSharedPreferences("message_scope",android.content.Context.MODE_PRIVATE)}
-    var account by remember { mutableStateOf(if(SecureTokenStore(context).load()!=null) scopePrefs.getString("ownerId",null) ?: "local:$localOwner" else "local:$localOwner") }
+    var linkedAccount by remember { mutableStateOf(scopePrefs.getString("ownerId",null)) }
+    var account by remember { mutableStateOf(if(SecureTokenStore(context).load()!=null) linkedAccount ?: "local:$localOwner" else "local:$localOwner") }
     var online by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<String?>(null) }
     var working by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        try { account=client.request("GET","/v1/me").getString("ownerId");scopePrefs.edit().putString("ownerId",account).apply();online=true }
+        try { account=client.request("GET","/v1/me").getString("ownerId");scopePrefs.edit().putString("ownerId",account).apply();linkedAccount=account;online=true }
         catch(_:Exception){ notice="وضع محلي دون اتصال. الرسائل تبقى في الانتظار ولا تُرسل SMS." }
     }
     val repository=remember(account,online) { MessagesRepository(MessagesDatabase.get(context),account,if(online) client else null) }
@@ -38,6 +39,7 @@ fun MessagesScreen(localOwner: String) {
     var peer by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
     var consent by remember { mutableStateOf(false) }
+    var creating by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text("الرسائل — وضع تجريبي",style=MaterialTheme.typography.titleLarge)
         Text("هذه محادثات ومسودات محفوظة. لا يُرسل هذا الوضع رسائل SMS إلى الهاتف.",style=MaterialTheme.typography.bodySmall)
@@ -50,6 +52,7 @@ fun MessagesScreen(localOwner: String) {
                     val profile=client.request("GET","/v1/me")
                     val remoteAccount=profile.getString("ownerId")
                     scopePrefs.edit().putString("ownerId",remoteAccount).apply()
+                    linkedAccount=remoteAccount
                     if(remoteAccount!=account){account=remoteAccount;online=true;selected=null;notice="تم ربط الحساب. المسودات المحلية السابقة محفوظة في نطاقها المحلي."}
                     else { online=true;val sent=MessagesRepository(MessagesDatabase.get(context),account,client).sync();notice="تمت مزامنة $sent رسالة تجريبية. لم تُرسل SMS." }
                 }catch(_:Exception){notice="تعذرت المزامنة. السجل والمسودات محفوظان محليًا."}
@@ -57,14 +60,12 @@ fun MessagesScreen(localOwner: String) {
             }},enabled=!working) { Text(if(working) "جارٍ المزامنة…" else "مزامنة تجريبية") }
             if(selected!=null) OutlinedButton(onClick={selected=null}){Text("المحادثات")}
         }
+        if(linkedAccount!=null) TextButton(onClick={
+            account=if(account.startsWith("local:")) linkedAccount!! else "local:$localOwner"
+            online=false;selected=null;notice="عرض السجل المحفوظ لهذا النطاق. المزامنة تتطلب التحقق من الحساب المتصل."
+        }) { Text(if(account.startsWith("local:")) "سجل الحساب المتصل" else "المسودات المحلية قبل الربط") }
         if(selected==null) {
-            OutlinedTextField(peer,{peer=it.take(16)},label={Text("رقم الوجهة بصيغة دولية +…")},singleLine=true)
-            OutlinedTextField(label,{label=it.take(80)},label={Text("اسم المحادثة")},singleLine=true)
-            Row { Checkbox(consent,{consent=it});Text("لدي موافقة الطرف على التواصل",Modifier.padding(top=12.dp)) }
-            Button(onClick={scope.launch {
-                try { selected=repository.create(peer,label,consent).id;peer="";label="";consent=false }
-                catch(_:Exception){notice="تحقق من الرقم والموافقة."}
-            }},enabled=MessageRules.validDestination(peer) && consent) { Text("محادثة تجريبية جديدة") }
+            Button(onClick={creating=true}) { Text("محادثة تجريبية جديدة") }
             if(conversations.isEmpty()) Text("لا توجد محادثات. أنشئ محادثة لحفظ مسودة دون اتصال.")
             LazyColumn(Modifier.weight(1f)) {
                 items(conversations,key={it.id}) { conversation ->
@@ -79,6 +80,20 @@ fun MessagesScreen(localOwner: String) {
             ConversationScreen(repository,selected!!,onNotice={notice=it}) { selected=null }
         }
     }
+    if(creating) AlertDialog(
+        onDismissRequest={creating=false},
+        title={Text("محادثة تجريبية جديدة")},
+        text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(peer,{peer=it.take(16)},label={Text("رقم الوجهة بصيغة دولية +…")},singleLine=true)
+            OutlinedTextField(label,{label=it.take(80)},label={Text("اسم المحادثة")},singleLine=true)
+            Row { Checkbox(consent,{consent=it});Text("لدي موافقة الطرف على التواصل",Modifier.padding(top=12.dp)) }
+        }},
+        confirmButton={TextButton(onClick={scope.launch {
+            try { selected=repository.create(peer,label,consent).id;peer="";label="";consent=false;creating=false }
+            catch(_:Exception){notice="تحقق من الرقم والموافقة."}
+        }},enabled=MessageRules.validDestination(peer) && consent){Text("إنشاء")}},
+        dismissButton={TextButton(onClick={creating=false}){Text("إلغاء")}}
+    )
 }
 @Composable
 private fun ColumnScope.ConversationScreen(repository: MessagesRepository,id: String,onNotice: (String)->Unit,onDeleted: ()->Unit) {
@@ -117,7 +132,7 @@ private fun ColumnScope.ConversationScreen(repository: MessagesRepository,id: St
     },label={Text("اكتب رسالة — تُحفظ كمسودة")},modifier=Modifier.fillMaxWidth().testTag("message_draft"),enabled=loaded && !queueing)
     Row {
         Button(onClick={scope.launch {queueing=true;try {DraftSaver.flush(repository,id);repository.queue(id,text);text="";onNotice("حُفظت في الانتظار. اضغط المزامنة للإرسال التجريبي.")}catch(_:Exception){onNotice("تعذر حفظ الرسالة.")}finally{queueing=false}}},enabled=!queueing && MessageRules.validBody(text)){Text("حفظ في قائمة الانتظار")}
-        TextButton(onClick={scope.launch {repository.delete(id);onDeleted();onNotice("حُذف السجل المحلي فقط. استخدم حذف الخادم لإزالة نسخته.")}}){Text("حذف محلي")}
+        TextButton(onClick={scope.launch {repository.delete(id);onDeleted();onNotice("حُذف السجل المحلي فقط. قد تعود النسخة المتزامنة عند تحديث الحساب.")}}){Text("حذف محلي")}
     }
 }
 
