@@ -35,3 +35,15 @@ Preserved Stage 1 local owner/PIN/DataStore and Stage 2 owner bootstrap/PostgreS
 An approved TURN deployment/provider with `TURN_URLS` and coturn-compatible `TURN_SHARED_SECRET` is needed. No TURN host or account was invented. A Firebase/FCM project configuration and scoped service-account credentials are needed to activate and verify the implemented push path. Do not paste long-term secrets into source or reports.
 
 Once configured, authorize two devices via a one-use invite; test accept/reject/hangup/mute on independent networks, verify no microphone use after cancellation (including hangup during accept), check live history, wired/Bluetooth routing, phone interruption, app background, notification denial and process death on Android API 26 and 35+. These tests cannot be replaced by successful compilation or Chromium tone transport.
+
+## Follow-up evidence — Stage 3 completion work
+
+Code commit `c1affb1b6a6e0fe024b99a6d87b7a5a8f2f2b86f`:
+
+- Android run https://github.com/Mtzallqmy/Nawslk/actions/runs/38191524614 succeeded. Includes Robolectric API 26 and 35 tests: private incoming notifications, stale/invalid call rejection, no microphone service started by a notification, persistent real-call history, session-scoped foreground readiness and audio-mode release. This is framework-shadow coverage, not hardware capture or real FCM delivery.
+- Backend run https://github.com/Mtzallqmy/Nawslk/actions/runs/38191524543 succeeded: 17 tests, zero skips, PostgreSQL integration, encrypted push registration, duplicate-token ownership rejection and transactional push outbox delivery.
+- Direct and forced TURN Chromium audio tests passed. Relay credentials were issued by the existing authenticated ICE endpoint using HMAC-SHA1 and accepted by a disposable coturn server. A temporary CI-only UDP drop stopped received RTP; removing it restored audio. Mute/unmute, signaling hangup and media-track cleanup also passed.
+- FCM HTTP v1 OAuth sender, bounded retries, expiry, encrypted tokens, Android process-restored configuration and FirebaseMessagingService are implemented. Provider calls are tested with mock HTTP responses; live Firebase credentials remain absent.
+- Railway deployment `114429a0-e9a4-4a92-9b9d-141e7d62d2d2` succeeded, pinned to the tested code commit. HTTPS health is 200, database connected, bootstrap configuration verified, and calling settings explicitly report `turnConfigured=false`, `pushConfigured=false`.
+
+Stage 3 is still not closed: activate approved production TURN and Firebase configuration per STAGE_3_PRODUCTION_SETUP.md, verify real Android incoming delivery and hardware/lifecycle behavior, then transition to the supplied Stage 4 prompt. No Stage 4 branch or APK was created prematurely.
