@@ -46,15 +46,14 @@ async function send(res, status, data) {
   res.end(JSON.stringify(data));
 }
 async function readBody(req) {
-  let body = '';
-  let bytes = 0;
+  const chunks=[];let bytes=0;
   for await (const chunk of req) {
-    bytes += chunk.length;
-    body += chunk;
-    if (bytes > 24576) throw new Error('body_too_large');
+    bytes+=chunk.length;
+    if(bytes>24576)throw new Error('body_too_large');
+    chunks.push(chunk);
   }
-  const parsed = JSON.parse(body || '{}');
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new SyntaxError('invalid_json_object');
+  const parsed=JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+  if(!parsed || typeof parsed!=='object' || Array.isArray(parsed))throw new SyntaxError('invalid_json_object');
   return parsed;
 }
 const server = http.createServer(async (req, res) => {

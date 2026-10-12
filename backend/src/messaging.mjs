@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { createHash, createHmac, createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { transaction, uuid } from './devices.mjs';
-import { validE164, validMessageBody, transition, MockMessageProvider, LicensedProviderAdapter, verifyWebhook } from './message-domain.mjs';
+import { validE164, validMessageBody, transition, deliveryTransition, MockMessageProvider, LicensedProviderAdapter, verifyWebhook } from './message-domain.mjs';
 export async function migrateMessaging(pool) {
  return transaction(pool,async db=>{
   await db.query("SELECT pg_advisory_xact_lock(hashtextextended('nawslk-schema-migrations',0))");
@@ -98,7 +98,7 @@ export async function applyWebhook(pool,raw,headers,secret) {
   const latest=await db.query('SELECT MAX(event_at) AS last FROM delivery_events WHERE message_id=$1',[event.messageId]);
   // Late events are retained for audit; they cannot downgrade delivered/received state.
   if(current==='DELIVERED' || Date.parse(event.eventAt)<new Date(latest.rows[0].last).getTime())return {ignored:true};
-  let next;try{next=transition(current,event.status);}catch{return {ignored:true};}
+  let next;try{next=deliveryTransition(current,event.status);}catch{return {ignored:true};}
   await db.query('UPDATE messages SET status=$2,updated_at=NOW() WHERE id=$1',[event.messageId,next]);
   return {status:next};
  });

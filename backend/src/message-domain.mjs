@@ -29,3 +29,11 @@ export function verifyWebhook(raw,{timestamp,nonce,signature,secret,now=Date.now
  const expected=createHmac('sha256',secret).update(timestamp+'.'+nonce+'.').update(raw).digest();
  return timingSafeEqual(expected,Buffer.from(signature,'hex'));
 }
+
+export function deliveryTransition(current,reported) {
+ if(current==='DELIVERED' || current==='RECEIVED' || current==='FAILED')return current;
+ let state=current;
+ if((reported==='SENT' || reported==='DELIVERED') && state==='QUEUED')state=transition(state,'SENDING');
+ if(reported==='DELIVERED' && state==='SENDING')state=transition(state,'SENT');
+ return transition(state,reported);
+}

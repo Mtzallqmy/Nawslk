@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { validE164, validMessageBody, transition, numberTransitions, MockMessageProvider, MockNumberProvider, LicensedProviderAdapter, verifyWebhook } from '../src/message-domain.mjs';
+import { validE164, validMessageBody, transition, deliveryTransition, numberTransitions, MockMessageProvider, MockNumberProvider, LicensedProviderAdapter, verifyWebhook } from '../src/message-domain.mjs';
 import { encryptMessage,decryptMessage,cursor } from '../src/messaging.mjs';
 test('message and number states reject impossible transitions',()=>{
  assert.equal(transition('SENDING','SENT'),'SENT');assert.throws(()=>transition('QUEUED','DELIVERED'),/invalid_transition/);
@@ -28,4 +28,11 @@ test('signed webhooks bind exact bytes, timestamp and nonce',()=>{
  const headers={timestamp,nonce,secret,signature,now:1700000000000};
  assert.ok(verifyWebhook(raw,headers));assert.equal(verifyWebhook(Buffer.from('{}'),headers),false);
  assert.equal(verifyWebhook(raw,{...headers,now:1700000600000}),false);assert.equal(verifyWebhook(raw,{...headers,signature:'a'}),false);
+});
+
+test('out-of-order provider delivery advances pending stages without reopening terminals',()=>{
+ assert.equal(deliveryTransition('SENDING','DELIVERED'),'DELIVERED');
+ assert.equal(deliveryTransition('QUEUED','DELIVERED'),'DELIVERED');
+ assert.equal(deliveryTransition('DELIVERED','SENT'),'DELIVERED');
+ assert.equal(deliveryTransition('FAILED','DELIVERED'),'FAILED');
 });

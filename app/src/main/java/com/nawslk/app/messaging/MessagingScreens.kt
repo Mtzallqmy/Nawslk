@@ -33,6 +33,7 @@ fun MessagesScreen(localOwner: String) {
     }
     val repository=remember(account,online) { MessagesRepository(MessagesDatabase.get(context),account,if(online) client else null) }
     val conversations by repository.conversations.collectAsState(initial=emptyList())
+    val draftError by DraftSaver.error.collectAsState()
     var peer by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
     var consent by remember { mutableStateOf(false) }
@@ -40,6 +41,7 @@ fun MessagesScreen(localOwner: String) {
         Text("الرسائل — وضع تجريبي",style=MaterialTheme.typography.titleLarge)
         Text("هذه محادثات ومسودات محفوظة. لا يُرسل هذا الوضع رسائل SMS إلى الهاتف.",style=MaterialTheme.typography.bodySmall)
         if(notice.isNotBlank()) Text(notice)
+        draftError?.let {Text(it,color=MaterialTheme.colorScheme.error)}
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick={scope.launch {
                 working=true

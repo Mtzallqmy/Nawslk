@@ -15,10 +15,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.SQLiteMode
 import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[26,35],application=Application::class)
+@SQLiteMode(SQLiteMode.Mode.NATIVE)
 class MessagesRoomTest {
     private val context: Context=RuntimeEnvironment.getApplication()
     private val name="test-messages.db"
@@ -26,7 +28,7 @@ class MessagesRoomTest {
     private fun open(): MessagesDatabase = Room.databaseBuilder(context,MessagesDatabase::class.java,name)
         .addMigrations(MessagesDatabase.MIGRATION_1_2).allowMainThreadQueries().build().also{database=it}
     @After fun cleanup(){database?.close();context.deleteDatabase(name)}
-    @Test fun offlineDraftAndQueuedHistorySurviveReopenAndDoNotClaimSent()=runBlocking {
+    @Test(timeout=30000) fun offlineDraftAndQueuedHistorySurviveReopenAndDoNotClaimSent()=runBlocking {
         var db=open();var repository=MessagesRepository(db,"local:owner",null)
         val conversation=repository.create("+967700000001","جهة اتصال",true)
         repository.draft(conversation.id,"مسودة دون اتصال")
@@ -37,7 +39,7 @@ class MessagesRoomTest {
         assertEquals(MessageStatus.QUEUED.name,repository.messages(conversation.id).first().single().status)
         assertEquals("",repository.conversation(conversation.id)?.draftText)
     }
-    @Test fun concurrentQueueUsesOneKeyAndRejectsChangedContent()=runBlocking {
+    @Test(timeout=30000) fun concurrentQueueUsesOneKeyAndRejectsChangedContent()=runBlocking {
         val db=open();val repository=MessagesRepository(db,"account-a",null)
         val conversation=repository.create("+967700000001","test",true);val key=UUID.randomUUID().toString()
         val results=listOf(async(Dispatchers.IO){repository.queue(conversation.id,"content",key)},async(Dispatchers.IO){repository.queue(conversation.id,"content",key)}).awaitAll()
@@ -49,7 +51,7 @@ class MessagesRoomTest {
         assertThrows(IllegalStateException::class.java){runBlocking{other.queue(conversation.id,"denied")}}
         repository.delete(conversation.id);assertNull(db.dao().message(first.id,"account-a"))
     }
-    @Test fun migrationFromOnePreservesConversationMessageAndAddsSyncColumns()=runBlocking {
+    @Test(timeout=30000) fun migrationFromOnePreservesConversationMessageAndAddsSyncColumns()=runBlocking {
         val file=context.getDatabasePath(name);file.parentFile?.mkdirs()
         val old=android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(file,null)
         old.execSQL("CREATE TABLE conversations(id TEXT NOT NULL PRIMARY KEY, accountKey TEXT NOT NULL,peerE164 TEXT NOT NULL,label TEXT NOT NULL,mode TEXT NOT NULL,consent INTEGER NOT NULL,createdAtMs INTEGER NOT NULL,updatedAtMs INTEGER NOT NULL,draftText TEXT NOT NULL)")
