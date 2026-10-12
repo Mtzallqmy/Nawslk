@@ -11,6 +11,8 @@ import com.nawslk.app.MainActivity
 
 /** Started from a visible Activity only, after RECORD_AUDIO is granted. */
 class ActiveCallService : Service() {
+    private var sessionId: String? = null
+    companion object { val ready = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
     override fun onCreate() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
@@ -25,8 +27,9 @@ class ActiveCallService : Service() {
     }
     override fun onStartCommand(intent: Intent?,flags: Int,startId: Int): Int {
         if(intent?.action=="END") CallRuntime.get(this).hangUp()
+        else { sessionId=intent?.getStringExtra("session_id"); ready.value=sessionId }
         return START_NOT_STICKY
     }
-    override fun onDestroy() { CallRuntime.get(this).serviceDestroyed(); super.onDestroy() }
+    override fun onDestroy() { ready.value=null; CallRuntime.get(this).serviceDestroyed(sessionId); super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 }

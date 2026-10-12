@@ -52,3 +52,22 @@ jobs:
         run: npm run test:webrtc
         env:
           TEST_DATABASE_URL: postgresql://nawslk:local_ci_only@localhost:5432/nawslk_test
+      - name: Start disposable TURN for relay acceptance
+        run: >-
+          docker run -d --name nawslk-ci-turn --network host coturn/coturn:4.6.3
+          -n --no-cli --fingerprint --lt-cred-mech --realm=nawslk-ci
+          --user=ci:ephemeral_ci_only --listening-ip=127.0.0.1
+          --relay-ip=127.0.0.1 --external-ip=127.0.0.1
+          --min-port=50000 --max-port=50050 --allow-loopback-peers
+          --log-file=stdout
+      - name: Test audio with forced TURN and measured network loss
+        run: npm run test:webrtc
+        timeout-minutes: 3
+        env:
+          TEST_DATABASE_URL: postgresql://nawslk:local_ci_only@localhost:5432/nawslk_test
+          TEST_TURN_URL: turn:127.0.0.1:3478?transport=udp
+          TEST_TURN_USERNAME: ci
+          TEST_TURN_PASSWORD: ephemeral_ci_only
+      - name: Clean up disposable TURN
+        if: always()
+        run: docker rm -f nawslk-ci-turn || true

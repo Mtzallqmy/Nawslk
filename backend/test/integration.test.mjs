@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { Pool } from 'pg';
 import { hashSecret } from '../src/auth.mjs';
 import { randomUUID } from 'node:crypto';
+import { dispatchPush, decryptPushToken } from '../src/push.mjs';
 const database = process.env.TEST_DATABASE_URL;
 test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocation', {skip: !database, timeout: 30000}, async () => {
   // Only an explicitly provided disposable database may be used by this suite.
@@ -42,6 +43,18 @@ test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocatio
     const caller=s.caller_id===owner.deviceId?owner:peer,callee=s.callee_id===owner.deviceId?owner:peer;
     const path='/v1/calls/sessions/'+s.id;
     assert.equal((await api(path,{token:other.token})).status,404);
+    assert.equal((await api('/v1/push/config',{token:callee.token})).status,503);
+    assert.equal((await api('/v1/devices/push-token',{method:'PUT',token:callee.token,body:{token:'short'}})).status,400);
+    const registration='integration-registration-token-123456789';
+    assert.equal((await api('/v1/devices/push-token',{method:'PUT',token:callee.token,body:{token:registration}})).status,200);
+    assert.equal((await api('/v1/devices/push-token',{method:'PUT',token:other.token,body:{token:registration}})).status,409);
+    const stored=(await db.query('SELECT ciphertext FROM device_push_tokens WHERE device_id=$1',[callee.deviceId])).rows[0];
+    assert.equal(decryptPushToken(stored.ciphertext,secret),registration);
+    const delivered=[];
+    await dispatchPush(db,{send:async(...args)=>delivered.push(args)},secret);
+    assert.equal(delivered.length,1); assert.equal(delivered[0][0],registration); assert.equal(delivered[0][1],s.id);
+    await dispatchPush(db,{send:async(...args)=>delivered.push(args)},secret);
+    assert.equal(delivered.length,1,'delivered outbox entry is not replayed');
     assert.equal((await api(path+'/accept',{method:'POST',token:caller.token})).status,403);
     assert.equal((await api('/v1/calls/incoming',{token:callee.token})).body.sessions.length,1);
     const signal={kind:'offer',payload:{sdp:'v=0\r\ns=integration\r\n'},messageId:randomUUID()};

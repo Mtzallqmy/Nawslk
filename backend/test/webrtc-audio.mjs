@@ -29,8 +29,11 @@ try {
  const a=await browser.newPage(),b=await browser.newPage();
  for(const page of [a,b]) {
   await page.goto('http://127.0.0.1:3100/health');
+  await page.evaluate(config=>{window.rtcConfig=config;},process.env.TEST_TURN_URL ? {
+   iceTransportPolicy:'relay',iceServers:[{urls:[process.env.TEST_TURN_URL],username:process.env.TEST_TURN_USERNAME,credential:process.env.TEST_TURN_PASSWORD}]
+  } : {});
   await page.evaluate(async()=>{
-   window.pc=new RTCPeerConnection(); window.ice=[];
+   window.pc=new RTCPeerConnection(window.rtcConfig); window.ice=[];
    window.pc.onicecandidate=e=>{if(e.candidate)window.ice.push(e.candidate.toJSON());};
    window.audio=new AudioContext(); await window.audio.resume();
    const oscillator=window.audio.createOscillator(); oscillator.frequency.value=440;
@@ -78,6 +81,19 @@ try {
  await wait(async()=>await energy(b)<10,'mute removes remote audio');
  await a.evaluate(()=>{window.track.enabled=true;});
  await wait(async()=>await energy(b)>50,'unmute restores remote audio');
+ const packetCount=page=>page.evaluate(async()=>[...(await window.pc.getStats()).values()].filter(s=>s.type==='inbound-rtp' && s.kind==='audio').reduce((sum,s)=>sum+s.packetsReceived,0));
+ const clients=await Promise.all([a.context().newCDPSession(a),b.context().newCDPSession(b)]);
+ const conditions={offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1};
+ for(const client of clients) await client.send('Network.emulateNetworkConditions',{...conditions,packetLoss:100});
+ await wait(async()=>await energy(b)<10,'packet loss silences incoming audio');
+ const stopped=await packetCount(b); await new Promise(r=>setTimeout(r,1000));
+ assert.ok(await packetCount(b)-stopped<=2,'RTP must stop during the network blackhole');
+ for(const client of clients) await client.send('Network.emulateNetworkConditions',{...conditions,packetLoss:0});
+ await wait(async()=>await energy(b)>50 && await packetCount(b)>stopped+10,'audio recovers after network restoration');
+ if(process.env.TEST_TURN_URL) for(const page of [a,b]) {
+  assert.ok(await page.evaluate(async()=>[...(await window.pc.getStats()).values()].some(s=>s.type==='local-candidate' && s.candidateType==='relay')),'Forced TURN relay candidate');
+ }
+ console.log('PASS: measured WebRTC packet loss and audio recovery'+(process.env.TEST_TURN_URL?' over forced TURN relay':''));
  await api(path,owner.token,'DELETE');
  assert.equal((await api(path,peer.token)).state,'ended');
  for(const page of [a,b]) {

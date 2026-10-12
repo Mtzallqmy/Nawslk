@@ -13,6 +13,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 import org.webrtc.IceCandidate
 import org.webrtc.PeerConnection
@@ -115,9 +116,9 @@ class CallRuntime private constructor(private val context: Context) {
             PeerConnection.IceServer.builder((0 until urls.length()).map { urls.getString(it) })
                 .setUsername(o.optString("username")).setPassword(o.optString("credential")).createIceServer()
         }
-        ContextCompat.startForegroundService(context,Intent(context,ActiveCallService::class.java))
-        // Let the service enter foreground before requesting audio focus on Android 15.
-        delay(250)
+        ContextCompat.startForegroundService(context,Intent(context,ActiveCallService::class.java).putExtra("session_id",id))
+        // Wait for the actual service foreground handshake, not an arbitrary delay.
+        withTimeout(5000) { ActiveCallService.ready.first { it==id } }
         audio = CallAudioController(context) { scope.launch { finish(CallStatus.FAILED,"توقفت المكالمة بسبب مقاطعة صوتية.") } }
         check(audio!!.activate())
         outgoing = Channel(512)
@@ -207,7 +208,7 @@ class CallRuntime private constructor(private val context: Context) {
         catch (_: SecurityException) { error.value="امنح إذن الأجهزة القريبة لاستخدام سماعة Bluetooth." }
     }
     fun hangUp() { scope.launch { finish(CallStatus.ENDED,null) } }
-    fun serviceDestroyed() { if(engine!=null) scope.launch { finish(CallStatus.FAILED,"توقفت خدمة المكالمة.") } }
+    fun serviceDestroyed(id: String?) { if(engine!=null && current.value?.id==id) scope.launch { finish(CallStatus.FAILED,"توقفت خدمة المكالمة.") } }
     private fun finish(status: CallStatus,message: String?,notifyPeer: Boolean=true) {
         val s=current.value ?: return
         // Release microphone first; signaling shutdown must never hold media resources.

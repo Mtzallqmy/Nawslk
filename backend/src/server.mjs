@@ -62,7 +62,7 @@ const server = http.createServer(async (req, res) => {
     if (publicAuth && !authLimit.allow(req.socket.remoteAddress || 'ingress')) return send(res,429,{error:'rate_limited'});
     if (req.method === 'GET' && path === '/health') {
       await pool.query('SELECT 1');
-      return send(res, 200, { status: 'ok', database: 'connected', bootstrapConfigVerified: Boolean(process.env.BOOTSTRAP_SECRET) });
+      return send(res, 200, { status: 'ok', database: 'connected', bootstrapConfigVerified: Boolean(process.env.BOOTSTRAP_SECRET), calling: { turnConfigured: Boolean(process.env.TURN_URLS && process.env.TURN_SHARED_SECRET), pushConfigured: Boolean(pushConfig) } });
     }
     if (req.method === 'POST' && path === '/v1/bootstrap') {
       const supplied = req.headers['x-bootstrap-secret'];
