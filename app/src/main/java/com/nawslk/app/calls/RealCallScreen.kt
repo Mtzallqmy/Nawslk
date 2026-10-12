@@ -38,6 +38,7 @@ fun RealCallScreen() {
     var ownId by remember { mutableStateOf("") }
     var isOwner by remember { mutableStateOf(false) }
     var devices by remember { mutableStateOf<List<Pair<String,String>>>(emptyList()) }
+    var mediaReady by remember { mutableStateOf(false) }
     var connected by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
     var elapsed by remember { mutableLongStateOf(0) }
@@ -65,6 +66,7 @@ fun RealCallScreen() {
             ownId=profile.getString("deviceId"); isOwner=profile.getBoolean("isOwner"); connected=true
             val registered=runtime.api.request("GET","/v1/devices").getJSONArray("devices")
             devices=(0 until registered.length()).map { val d=registered.getJSONObject(it); d.getString("id") to d.getString("label") }
+            mediaReady=try { runtime.api.request("GET","/v1/calls/ice-config");true } catch(_:Exception){false}
             runtime.watchIncoming()
             pushReady=try { CallPush.register(context,runtime.api) } catch(_:Exception){false}
         } catch (_: Exception) { connected=false; message="اربط المالك من حسابي أو استخدم دعوة جهاز موثوق." }
@@ -82,9 +84,10 @@ fun RealCallScreen() {
                 OutlinedButton(onClick={notificationsPermission.launch(Manifest.permission.POST_NOTIFICATIONS)}) { Text("السماح بإشعارات المكالمات") }
             }
             if(connected) {
+                if(!mediaReady) Text("الاتصال الصوتي غير جاهز: إعداد TURN في الخادم غير متوفر أو غير صالح.",color=MaterialTheme.colorScheme.error)
                 Text("معرف جهازك: $ownId",style=MaterialTheme.typography.bodySmall)
                 OutlinedTextField(peer,{peer=it},label={Text("معرف جهاز الطرف الآخر")},singleLine=true)
-                Button(onClick={authorized { runtime.dial(peer) }},enabled=call==null && peer.isNotBlank()) { Text("اتصال صوتي") }
+                Button(onClick={authorized { runtime.dial(peer) }},enabled=mediaReady && call==null && peer.isNotBlank()) { Text("اتصال صوتي") }
             }
             if(!connected || isOwner) {
                 OutlinedTextField(invite,{invite=it},label={Text("دعوة جهاز موثوق")},singleLine=true)
@@ -108,7 +111,7 @@ fun RealCallScreen() {
                 Text(when(s.status){CallStatus.RINGING -> if(s.direction==CallDirection.INCOMING) "مكالمة واردة" else "جارٍ انتظار الرد"; CallStatus.CONNECTING -> "جارٍ الاتصال أو استعادة الشبكة"; CallStatus.ACTIVE -> "مكالمة نشطة"; else -> "انتهت المكالمة"})
                 Text("الوقت منذ بدء الجلسة: ${elapsed/60000}:${(elapsed/1000%60).toString().padStart(2,'0')}")
                 if(s.direction==CallDirection.INCOMING && s.status==CallStatus.RINGING) {
-                    Row { Button(onClick={authorized { runtime.accept() }}){Text("رد")}; OutlinedButton(onClick={runtime.reject()}){Text("رفض")} }
+                    Row { Button(onClick={authorized { runtime.accept() }},enabled=mediaReady){Text("رد")}; OutlinedButton(onClick={runtime.reject()}){Text("رفض")} }
                 } else {
                     Row { Button(onClick={runtime.toggleMute()},enabled=s.status==CallStatus.ACTIVE){Text(if(muted) "إلغاء الكتم" else "كتم")}; OutlinedButton(onClick={runtime.toggleSpeaker()},enabled=s.status==CallStatus.ACTIVE){Text(if(speaker) "سماعة الهاتف" else "مكبر الصوت")} }
                 }
