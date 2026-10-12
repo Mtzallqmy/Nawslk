@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { migrateMessaging, createConversation, listConversations, listMessages, sendMessage, listNumbers, applyWebhook } from './messaging.mjs';
 import { ensurePushSchema, registerPushToken, pushConfiguration, FcmSender, dispatchPush } from './push.mjs';
 import { Pool } from 'pg';
 import { randomUUID, createHmac } from 'node:crypto';
@@ -21,6 +22,7 @@ if (process.env.BOOTSTRAP_SECRET && !secureEqualHash(hashSecret(process.env.BOOT
 await ensureDevices(pool);
 await ensureSignalingSchema(pool);
 await ensurePushSchema(pool);
+await migrateMessaging(pool);
 const pushConfig=pushConfiguration();
 const pushSender=pushConfig ? new FcmSender(pushConfig) : null;
 let pushing=false;
@@ -35,6 +37,8 @@ const authLimit = new RateLimiter({ max: 10 });
 const requestLimit = new RateLimiter({ max: 240 });
 const cleanup = setInterval(() => {
   pool.query("DELETE FROM signaling_sessions WHERE expires_at < NOW() - INTERVAL '1 day'").catch(() => {});
+  pool.query("DELETE FROM messages WHERE created_at < NOW()-INTERVAL '90 days' AND status IN ('SENT','DELIVERED','FAILED','RECEIVED')").catch(() => {});
+  pool.query('DELETE FROM webhook_nonces WHERE expires_at<NOW()').catch(() => {});
   pool.query("DELETE FROM device_invites WHERE expires_at < NOW() - INTERVAL '1 day'").catch(() => {});
 }, 60000).unref();
 async function send(res, status, data) {
@@ -95,11 +99,31 @@ const server = http.createServer(async (req, res) => {
       const { invite, label } = await readBody(req);
       return send(res,201,await redeemInvite(pool,invite,label));
     }
+    if (req.method==='POST' && path==='/v1/providers/licensed-adapter/webhook') {
+      if(process.env.NODE_ENV!=='test' || !process.env.WEBHOOK_TEST_SECRET) return send(res,503,{error:'provider_not_configured'});
+      let raw=Buffer.alloc(0);
+      for await(const chunk of req){raw=Buffer.concat([raw,chunk]);if(raw.length>8192)throw new Error('body_too_large');}
+      return send(res,200,await applyWebhook(pool,raw,{timestamp:req.headers['x-webhook-timestamp'],nonce:req.headers['x-webhook-nonce'],signature:req.headers['x-webhook-signature']},process.env.WEBHOOK_TEST_SECRET));
+    }
     if (path.startsWith('/v1/')) {
       const owner = await authenticate(pool,bearer(req.headers.authorization));
       if (!owner) return send(res,401,{error:'unauthorized'});
       if (!requestLimit.allow(owner.id)) return send(res,429,{error:'rate_limited'});
       const participantId = owner.id;
+      if(req.method==='GET' && path==='/v1/numbers') return send(res,200,await listNumbers(pool,owner));
+      if(req.method==='GET' && path==='/v1/conversations') return send(res,200,await listConversations(pool,owner,new URL(req.url,'http://localhost').searchParams.get('before') || '0'));
+      if(req.method==='POST' && path==='/v1/conversations') return send(res,201,await createConversation(pool,owner,await readBody(req)));
+      const conversationRoute=/^\/v1\/conversations\/([0-9a-f-]{36})(?:\/(messages))?$/.exec(path);
+      if(conversationRoute) {
+        if(!uuid(conversationRoute[1]))return send(res,400,{error:'invalid_conversation'});
+        if(req.method==='GET' && conversationRoute[2]==='messages') return send(res,200,await listMessages(pool,owner,conversationRoute[1],new URL(req.url,'http://localhost').searchParams.get('after') || '0',process.env.BOOTSTRAP_SECRET));
+        if(req.method==='POST' && conversationRoute[2]==='messages') return send(res,201,await sendMessage(pool,owner,conversationRoute[1],await readBody(req),process.env.BOOTSTRAP_SECRET));
+        if(req.method==='DELETE' && !conversationRoute[2]) {
+          const removed=await pool.query('DELETE FROM conversations WHERE id=$1 AND owner_id=$2 RETURNING id',[conversationRoute[1],owner.owner_id]);
+          return send(res,removed.rowCount?200:404,removed.rowCount?{status:'deleted'}:{error:'conversation_not_found'});
+        }
+        return send(res,405,{error:'method_not_allowed'});
+      }
       if (req.method === 'GET' && path === '/v1/me') return send(res,200,{deviceId:owner.id,ownerId:owner.owner_id,email:owner.email,isOwner:owner.is_owner});
       if (req.method === 'POST' && path === '/v1/devices/invites') {
         if (!owner.is_owner) return send(res,403,{error:'forbidden'});
@@ -196,6 +220,12 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     if (error.message === 'body_too_large') return send(res, 413, { error: 'body_too_large' });
     if (error instanceof SyntaxError) return send(res, 400, { error: 'invalid_json' });
+    if(['invalid_message','invalid_conversation','invalid_cursor','invalid_webhook'].includes(error.message))return send(res,400,{error:error.message});
+    if(error.message==='conversation_not_found' || error.message==='message_not_found')return send(res,404,{error:error.message});
+    if(error.message==='idempotency_conflict' || error.message==='webhook_replay')return send(res,409,{error:error.message});
+    if(error.message==='invalid_webhook_signature' || error.message==='consent_required')return send(res,403,{error:error.message});
+    if(error.message==='provider_not_configured' || error.message==='message_storage_unconfigured')return send(res,503,{error:error.message});
+    if(error.message==='message_rate_limited')return send(res,429,{error:error.message});
     if(error.message==='invalid_push_token') return send(res,400,{error:'invalid_push_token'});
     if(error.code==='23505') return send(res,409,{error:'identity_conflict'});
     if (error.message === 'invalid_invite') return send(res,400,{error:'invalid_invite'});

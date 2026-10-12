@@ -1,7 +1,7 @@
 name: Android Stage 1 Checks
 on:
   push:
-    branches: [stage-1-foundation, stage-2-backend-railway, stage-3-calling-webrtc]
+    branches: [stage-1-foundation, stage-2-backend-railway, stage-3-calling-webrtc, stage-4-messaging-numbers]
   pull_request:
 jobs:
   validate:

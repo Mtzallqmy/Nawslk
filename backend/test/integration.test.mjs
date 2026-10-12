@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { Pool } from 'pg';
 import { hashSecret } from '../src/auth.mjs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
+import { migrateMessaging } from '../src/messaging.mjs';
 import { dispatchPush, decryptPushToken } from '../src/push.mjs';
 const database = process.env.TEST_DATABASE_URL;
 test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocation', {skip: !database, timeout: 30000}, async () => {
   // Only an explicitly provided disposable database may be used by this suite.
   const db = new Pool({connectionString:database});
-  await db.query('DROP TABLE IF EXISTS call_push_outbox,device_push_tokens,signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
+  await db.query('DROP TABLE IF EXISTS delivery_events,webhook_nonces,messages,conversations,number_events,number_assignments,virtual_numbers,provider_accounts,schema_migrations,call_push_outbox,device_push_tokens,signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
   const secret = 'integration-only-bootstrap-secret-32-bytes';
-  const child = spawn(process.execPath,['src/server.mjs'],{env:{...process.env,DATABASE_URL:database,BOOTSTRAP_SECRET:secret,BOOTSTRAP_SECRET_SHA256:hashSecret(secret),PORT:'3099'},stdio:'ignore'});
+  const child = spawn(process.execPath,['src/server.mjs'],{env:{...process.env,DATABASE_URL:database,BOOTSTRAP_SECRET:secret,BOOTSTRAP_SECRET_SHA256:hashSecret(secret),PORT:'3099',NODE_ENV:'test',WEBHOOK_TEST_SECRET:'integration-webhook-secret'},stdio:'ignore'});
   const api = async (path,{token,body,method='GET',bootstrap}={}) => {
     const res = await fetch('http://127.0.0.1:3099'+path,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...(bootstrap?{'x-bootstrap-secret':bootstrap}:{})},body:body?JSON.stringify(body):undefined});
     return {status:res.status,body:await res.json()};
@@ -80,5 +81,48 @@ test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocatio
     assert.equal((await api('/v1/me',{token:peer.token})).status,401);
     assert.equal((await api('/v1/calls/sessions/'+last.id,{token:owner.token})).body.end_reason,'device_revoked');
     assert.equal((await api('/v1/bootstrap',setup)).status,409);
+    await migrateMessaging(db); // Re-running numbered migrations is safe and preserves owner/call data.
+    assert.equal((await api('/v1/me',{token:owner.token})).body.deviceId,owner.deviceId);
+    assert.equal((await api('/v1/numbers',{token:owner.token})).body.numbers.length,0);
+    const conversationId=randomUUID();
+    const conversation={id:conversationId,peerE164:'+967700000001',label:'اختبار',mode:'DEMO',consent:true};
+    assert.equal((await api('/v1/conversations',{method:'POST',token:owner.token,body:{...conversation,consent:false}})).status,400);
+    assert.equal((await api('/v1/conversations',{method:'POST',token:owner.token,body:{...conversation,mode:'SMS'}})).status,503);
+    assert.equal((await api('/v1/conversations',{method:'POST',token:owner.token,body:conversation})).status,201);
+    assert.equal((await api('/v1/conversations',{method:'POST',token:owner.token,body:conversation})).body.id,conversationId);
+    const otherOwnerId=randomUUID(),otherToken='other-owner-token-for-isolation-tests';
+    await db.query('INSERT INTO owner_device(id,email,token_hash) VALUES($1,$2,$3)',[otherOwnerId,'fixture@example.com',hashSecret(otherToken)]);
+    const messagesPath='/v1/conversations/'+conversationId+'/messages';
+    assert.equal((await api(messagesPath,{token:otherToken})).status,404);
+    assert.equal((await api(messagesPath)).status,401);
+    const outgoing={id:randomUUID(),idempotencyKey:randomUUID(),body:'رسالة تجريبية خاصة'};
+    const sends=await Promise.all([api(messagesPath,{method:'POST',token:owner.token,body:outgoing}),api(messagesPath,{method:'POST',token:owner.token,body:outgoing})]);
+    assert.deepEqual(sends.map(x=>x.status),[201,201]);assert.equal(sends[0].body.id,sends[1].body.id);
+    assert.ok(sends[0].body.simulated);assert.equal(sends[0].body.status,'SENT');
+    assert.equal((await api(messagesPath,{method:'POST',token:owner.token,body:{...outgoing,body:'changed'}})).status,409);
+    const storedMessage=(await db.query('SELECT ciphertext FROM messages WHERE id=$1',[outgoing.id])).rows[0].ciphertext;
+    assert.ok(!storedMessage.includes('رسالة'));
+    assert.equal((await api(messagesPath,{token:owner.token})).body.messages.length,1);
+    assert.equal((await api('/v1/conversations?before=-1',{token:owner.token})).status,400);
+    assert.equal((await api('/v1/conversations',{token:otherToken})).body.conversations.length,0);
+    // Fixture-only SMS state: tests the signed webhook adapter without enabling live sending.
+    await db.query("UPDATE messages SET mode='SMS',provider_key='licensed-adapter' WHERE id=$1",[outgoing.id]);
+    const webhook=async(event,nonce='nonce_'+randomUUID().replaceAll('-',''))=>{
+      const raw=JSON.stringify(event),timestamp=String(Math.floor(Date.now()/1000));
+      const signature=createHmac('sha256','integration-webhook-secret').update(timestamp+'.'+nonce+'.'+raw).digest('hex');
+      const response=await fetch('http://127.0.0.1:3099/v1/providers/licensed-adapter/webhook',{method:'POST',headers:{'content-type':'application/json','x-webhook-timestamp':timestamp,'x-webhook-nonce':nonce,'x-webhook-signature':signature},body:raw});
+      return {status:response.status,body:await response.json()};
+    };
+    const delivery={providerKey:'licensed-adapter',eventId:'delivery_1',messageId:outgoing.id,status:'DELIVERED',eventAt:new Date().toISOString()};
+    const nonce='nonce_12345678901234567890';
+    assert.equal((await webhook(delivery,nonce)).body.status,'DELIVERED');
+    assert.equal((await webhook(delivery,nonce)).status,409);
+    assert.equal((await webhook(delivery)).body.duplicate,true);
+    assert.equal((await webhook({...delivery,eventId:'late_sent',status:'SENT',eventAt:new Date(Date.now()-1000).toISOString()})).body.ignored,true);
+    assert.equal((await api(messagesPath,{token:owner.token})).body.messages[0].status,'DELIVERED');
+    const invalidHook=await fetch('http://127.0.0.1:3099/v1/providers/licensed-adapter/webhook',{method:'POST',body:'{}'});assert.equal(invalidHook.status,403);
+    const removed=await api('/v1/conversations/'+conversationId,{method:'DELETE',token:owner.token});assert.equal(removed.status,200);
+    assert.equal((await db.query('SELECT id FROM messages WHERE id=$1',[outgoing.id])).rowCount,0);
+    assert.equal((await db.query('SELECT id FROM delivery_events WHERE message_id=$1',[outgoing.id])).rowCount,0);
   } finally { child.kill('SIGTERM'); if(child.exitCode===null) await new Promise(r=>child.once('exit',r)); await db.end(); }
 });
