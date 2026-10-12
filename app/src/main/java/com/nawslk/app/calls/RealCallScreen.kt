@@ -44,6 +44,9 @@ fun RealCallScreen() {
         else message="يلزم إذن الميكروفون لإجراء المكالمة."
         pending=null
     }
+    val bluetoothPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if(granted) runtime.routeHeadset() else message="يلزم إذن الأجهزة القريبة لاستخدام Bluetooth."
+    }
     fun authorized(action: () -> Unit) {
         if(ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) action()
         else {
@@ -91,6 +94,10 @@ fun RealCallScreen() {
                 } else {
                     Row { Button(onClick={runtime.toggleMute()},enabled=s.status==CallStatus.ACTIVE){Text(if(muted) "إلغاء الكتم" else "كتم")}; OutlinedButton(onClick={runtime.toggleSpeaker()},enabled=s.status==CallStatus.ACTIVE){Text(if(speaker) "سماعة الهاتف" else "مكبر الصوت")} }
                 }
+                if(s.status==CallStatus.ACTIVE) OutlinedButton(onClick={
+                    if(Build.VERSION.SDK_INT>=31 && ContextCompat.checkSelfPermission(context,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED) bluetoothPermission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+                    else runtime.routeHeadset()
+                }) { Text("سماعة متصلة / Bluetooth") }
                 Button(onClick={runtime.hangUp()}){Text("إنهاء")}
             }
             if(message.isNotEmpty()) Text(message)

@@ -32,11 +32,35 @@ class CallAudioController(context: Context, private val onInterruption: () -> Un
             manager.isSpeakerphoneOn = enabled
         }
     }
+    fun headset(): Boolean {
+        if (Build.VERSION.SDK_INT >= 31) {
+            val device = manager.availableCommunicationDevices.firstOrNull {
+                it.type in setOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_BLE_HEADSET)
+            } ?: return false
+            return manager.setCommunicationDevice(device)
+        }
+        val devices = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        @Suppress("DEPRECATION")
+        if (devices.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }) {
+            manager.isSpeakerphoneOn = false
+            manager.startBluetoothSco()
+            manager.isBluetoothScoOn = true
+            return true
+        }
+        return devices.any { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
+    }
     fun release() {
         request?.let { manager.abandonAudioFocusRequest(it) }
         request = null
         if (Build.VERSION.SDK_INT >= 31) manager.clearCommunicationDevice()
-        else { @Suppress("DEPRECATION") manager.isSpeakerphoneOn = previousSpeaker }
+        else {
+            @Suppress("DEPRECATION")
+            manager.stopBluetoothSco()
+            @Suppress("DEPRECATION")
+            manager.isBluetoothScoOn = false
+            @Suppress("DEPRECATION")
+            manager.isSpeakerphoneOn = previousSpeaker
+        }
         manager.mode = previousMode
     }
 }

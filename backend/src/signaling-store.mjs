@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { transaction, uuid } from './devices.mjs';
+import { transaction, uuid, authorizedPeer } from './devices.mjs';
 export async function ensureSignalingSchema(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS signaling_sessions (
     id UUID PRIMARY KEY, caller_id UUID NOT NULL, callee_id UUID NOT NULL,
@@ -16,11 +16,12 @@ export async function ensureSignalingSchema(pool) {
   await pool.query('CREATE INDEX IF NOT EXISTS signal_poll ON signaling_messages(session_id,id)');
   await pool.query('CREATE INDEX IF NOT EXISTS call_inbox ON signaling_sessions(callee_id,expires_at)');
 }
-export async function createSession(pool, callerId, calleeId) {
+export async function createSession(pool, callerId, calleeId, ownerId) {
   if (callerId === calleeId) throw new Error('self_call_not_allowed');
   return transaction(pool, async db => {
     // Lock both participant IDs in stable order, covering simultaneous cross-calls.
     for (const id of [callerId,calleeId].sort()) await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [id]);
+    if (!await authorizedPeer(db,{id:callerId,owner_id:ownerId},calleeId) || !await authorizedPeer(db,{id:calleeId,owner_id:ownerId},callerId)) throw new Error('forbidden');
     const busy = await db.query(`SELECT id FROM signaling_sessions WHERE state <> 'ended' AND expires_at>NOW()
       AND (caller_id=ANY($1::uuid[]) OR callee_id=ANY($1::uuid[]))`, [[callerId,calleeId]]);
     if (busy.rowCount) throw new Error('participant_busy');

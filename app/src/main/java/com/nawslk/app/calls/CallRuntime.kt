@@ -193,13 +193,17 @@ class CallRuntime private constructor(private val context: Context) {
     }
     fun toggleMute() { muted.value=!muted.value; engine?.mute(muted.value) }
     fun toggleSpeaker() { speaker.value=!speaker.value; audio?.speaker(speaker.value) }
+    fun routeHeadset() {
+        try { if(audio?.headset()==true) speaker.value=false else error.value="لا توجد سماعة اتصال متصلة." }
+        catch (_: SecurityException) { error.value="امنح إذن الأجهزة القريبة لاستخدام سماعة Bluetooth." }
+    }
     fun hangUp() { scope.launch { finish(CallStatus.ENDED,null) } }
     fun serviceDestroyed() { if(engine!=null) scope.launch { finish(CallStatus.FAILED,"توقفت خدمة المكالمة.") } }
     private fun finish(status: CallStatus,message: String?,notifyPeer: Boolean=true) {
         val s=current.value ?: return
         // Release microphone first; signaling shutdown must never hold media resources.
-        engine?.close(); engine=null
-        audio?.release(); audio=null
+        runCatching { engine?.close() }; engine=null
+        runCatching { audio?.release() }; audio=null
         job?.cancel(); job=null
         outgoing?.close(); outgoing=null
         sending?.cancel(); sending=null

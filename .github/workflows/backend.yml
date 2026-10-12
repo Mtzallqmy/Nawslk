@@ -46,3 +46,9 @@ jobs:
           grep -q '"database":"connected"' /tmp/health.json
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/v1/me)" = "401"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/v1/bootstrap -H 'Content-Type: application/json' -d '{"email":"owner@example.com"}')" = "403"
+      - name: Install Chromium for real media transport test
+        run: npx playwright install --with-deps chromium
+      - name: Test bidirectional WebRTC audio without APK
+        run: npm run test:webrtc
+        env:
+          TEST_DATABASE_URL: postgresql://nawslk:local_ci_only@localhost:5432/nawslk_test

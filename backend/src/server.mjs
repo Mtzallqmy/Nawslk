@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { Pool } from 'pg';
 import { randomUUID, createHmac } from 'node:crypto';
-import { ensureDevices, authenticate, issueInvite, redeemInvite, authorizedPeer, uuid } from './devices.mjs';
+import { ensureDevices, authenticate, issueInvite, redeemInvite, authorizedPeer, uuid, transaction } from './devices.mjs';
 import { RateLimiter } from './limits.mjs';
 import { hashSecret, secureEqualHash, newToken, bearer, validOwnerEmail } from './auth.mjs';
 import { ensureSignalingSchema, createSession, getSession, appendSignal, listSignals, transitionSession } from './signaling-store.mjs';
@@ -13,6 +13,7 @@ if (!process.env.DATABASE_URL || !/^[a-f0-9]{64}$/.test(bootstrapHash || '')) {
   throw new Error('DATABASE_URL and BOOTSTRAP_SECRET_SHA256 are required');
 }
 await pool.query('CREATE TABLE IF NOT EXISTS owner_device (id UUID PRIMARY KEY, email TEXT NOT NULL, token_hash TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW(), revoked_at TIMESTAMPTZ)');
+if (process.env.NODE_ENV === 'production' && !process.env.BOOTSTRAP_SECRET) throw new Error('bootstrap_configuration_missing');
 if (process.env.BOOTSTRAP_SECRET && !secureEqualHash(hashSecret(process.env.BOOTSTRAP_SECRET), bootstrapHash)) {
   throw new Error('bootstrap_configuration_mismatch');
 }
@@ -36,7 +37,9 @@ async function readBody(req) {
     body += chunk;
     if (bytes > 24576) throw new Error('body_too_large');
   }
-  return JSON.parse(body || '{}');
+  const parsed = JSON.parse(body || '{}');
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new SyntaxError('invalid_json_object');
+  return parsed;
 }
 const server = http.createServer(async (req, res) => {
   try {
@@ -47,7 +50,7 @@ const server = http.createServer(async (req, res) => {
     if (publicAuth && !authLimit.allow(req.socket.remoteAddress || 'ingress')) return send(res,429,{error:'rate_limited'});
     if (req.method === 'GET' && path === '/health') {
       await pool.query('SELECT 1');
-      return send(res, 200, { status: 'ok', database: 'connected' });
+      return send(res, 200, { status: 'ok', database: 'connected', bootstrapConfigVerified: Boolean(process.env.BOOTSTRAP_SECRET) });
     }
     if (req.method === 'POST' && path === '/v1/bootstrap') {
       const supplied = req.headers['x-bootstrap-secret'];
@@ -99,9 +102,13 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'DELETE' && revoke) {
         if (!uuid(revoke[1])) return send(res,400,{error:'invalid_device'});
         if (!owner.is_owner && revoke[1] !== owner.id) return send(res,403,{error:'forbidden'});
-        const revoked = await pool.query('UPDATE trusted_devices SET revoked_at=NOW() WHERE id=$1 AND owner_id=$2 RETURNING id',[revoke[1],owner.owner_id]);
+        const revoked = await transaction(pool, async db => {
+          await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[revoke[1]]);
+          const result = await db.query('UPDATE trusted_devices SET revoked_at=NOW() WHERE id=$1 AND owner_id=$2 RETURNING id',[revoke[1],owner.owner_id]);
+          if (result.rowCount) await db.query("UPDATE signaling_sessions SET state='ended',end_reason='device_revoked' WHERE caller_id=$1 OR callee_id=$1",[revoke[1]]);
+          return result;
+        });
         if (!revoked.rowCount) return send(res,404,{error:'device_not_found'});
-        await pool.query("UPDATE signaling_sessions SET state='ended',end_reason='device_revoked' WHERE caller_id=$1 OR callee_id=$1",[revoke[1]]);
         return send(res,200,{status:'revoked'});
       }
       if (req.method === 'GET' && path === '/v1/calls/incoming') {
@@ -109,7 +116,7 @@ const server = http.createServer(async (req, res) => {
         return send(res,200,{sessions:result.rows});
       }
       if (req.method === 'GET' && path === '/v1/calls/ice-config') {
-        const urls = (process.env.TURN_URLS || '').split(',').filter(Boolean);
+        const urls = (process.env.TURN_URLS || '').split(',').map(s=>s.trim()).filter(s=>/^turns?:[^\s]+$/.test(s));
         if (!urls.length || !process.env.TURN_SHARED_SECRET) return send(res,503,{error:'turn_not_configured'});
         const username = `${Math.floor(Date.now()/1000)+3600}:${owner.id}`;
         const credential = createHmac('sha1',process.env.TURN_SHARED_SECRET).update(username).digest('base64');
@@ -123,7 +130,7 @@ const server = http.createServer(async (req, res) => {
         const known = await authorizedPeer(pool, owner, peerId);
         if (!known) return send(res, 404, { error: 'peer_not_found' });
         if (peerId === participantId) return send(res, 400, { error: 'self_call_not_allowed' });
-        return send(res, 201, await createSession(pool, participantId, peerId));
+        return send(res, 201, await createSession(pool, participantId, peerId, owner.owner_id));
       }
       const match = /^\/v1\/calls\/sessions\/([0-9a-f-]{36})(?:\/(signals|accept|reject|heartbeat))?$/.exec(path);
       if (!match) return send(res, 404, { error: 'not_found' });
