@@ -2,6 +2,12 @@
 
 Existing Nawslk Railway project/API/PostgreSQL only. No additional production service or paid provider has been provisioned.
 
+## Managed Cloudflare TURN
+
+Cloudflare TURN uses its credential-generation API rather than the coturn shared-secret algorithm. The Android ICE endpoint stays unchanged. Set `TURN_PROVIDER=cloudflare`, `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` on the existing API service. Keep the long-lived API token exclusively on the server; never use it as an Android ICE password. The server requests one-hour credentials over fixed HTTPS, rejects redirects, bounds upstream response bytes/time, strips blocked port-53 alternatives, coalesces concurrent requests and caches independently per authenticated device. Upstream failure returns safe 503; `turnConfigured=true` only means settings are usable, not external media acceptance. Omit TURN_PROVIDER or use `coturn` for the original shared-secret path.
+
+`infra/turn/Probe.Dockerfile` and `backend/scripts/validate-turn.mjs` provide a disposable no-database job for production credential issuance and forced-relay generated audio on UDP, TCP and TLS separately. It needs only the Cloudflare TURN variables, has no public HTTP endpoint, and must use restartPolicy NEVER and be removed when results have been collected. It does not replace authorized two-Android-device testing. Logs contain outcomes/transport only, never long-lived or temporary credentials.
+
 ## Required externally supplied settings
 
 Set these on the existing Railway API service, using Railway's variables UI (do not commit them):

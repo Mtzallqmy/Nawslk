@@ -1,8 +1,9 @@
 import http from 'node:http';
+import { iceConfiguration, IceProvider } from './ice.mjs';
 import { migrateMessaging, createConversation, listConversations, listMessages, sendMessage, listNumbers, applyWebhook } from './messaging.mjs';
 import { ensurePushSchema, registerPushToken, pushConfiguration, FcmSender, dispatchPush } from './push.mjs';
 import { Pool } from 'pg';
-import { randomUUID, createHmac } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { ensureDevices, authenticate, issueInvite, redeemInvite, authorizedPeer, uuid, transaction } from './devices.mjs';
 import { RateLimiter } from './limits.mjs';
 import { hashSecret, secureEqualHash, newToken, bearer, validOwnerEmail } from './auth.mjs';
@@ -24,6 +25,8 @@ await ensureSignalingSchema(pool);
 await ensurePushSchema(pool);
 await migrateMessaging(pool);
 const pushConfig=pushConfiguration();
+const iceConfig=iceConfiguration();
+const iceProvider=new IceProvider(iceConfig);
 const pushSender=pushConfig ? new FcmSender(pushConfig) : null;
 let pushing=false;
 const pushWorker=setInterval(async()=>{
@@ -65,7 +68,7 @@ const server = http.createServer(async (req, res) => {
     if (publicAuth && !authLimit.allow(req.socket.remoteAddress || 'ingress')) return send(res,429,{error:'rate_limited'});
     if (req.method === 'GET' && path === '/health') {
       await pool.query('SELECT 1');
-      return send(res, 200, { status: 'ok', database: 'connected', bootstrapConfigVerified: Boolean(process.env.BOOTSTRAP_SECRET), calling: { turnConfigured: Boolean(process.env.TURN_URLS && process.env.TURN_SHARED_SECRET), pushConfigured: Boolean(pushConfig) } });
+      return send(res, 200, { status: 'ok', database: 'connected', bootstrapConfigVerified: Boolean(process.env.BOOTSTRAP_SECRET), calling: { turnConfigured: Boolean(iceConfig), pushConfigured: Boolean(pushConfig) } });
     }
     if (req.method === 'POST' && path === '/v1/bootstrap') {
       const supplied = req.headers['x-bootstrap-secret'];
@@ -166,12 +169,7 @@ const server = http.createServer(async (req, res) => {
         return send(res,200,{sessions:result.rows});
       }
       if (req.method === 'GET' && path === '/v1/calls/ice-config') {
-        const urls = (process.env.TURN_URLS || '').split(',').map(s=>s.trim()).filter(s=>/^turns?:[^\s]+$/.test(s));
-        if (!urls.length || !process.env.TURN_SHARED_SECRET) return send(res,503,{error:'turn_not_configured'});
-        const username = `${Math.floor(Date.now()/1000)+3600}:${owner.id}`;
-        const credential = createHmac('sha1',process.env.TURN_SHARED_SECRET).update(username).digest('base64');
-        const stun=(process.env.STUN_URLS || '').split(',').map(s=>s.trim()).filter(s=>/^stuns?:[^\s]+$/.test(s));
-        return send(res,200,{iceServers:[{urls,username,credential},...(stun.length ? [{urls:stun}] : [])],expiresInSeconds:3600});
+        return send(res,200,await iceProvider.credentials(owner.id));
       }
       if (req.method === 'POST' && path === '/v1/calls/sessions') {
         const { peerId } = await readBody(req);
@@ -223,7 +221,7 @@ const server = http.createServer(async (req, res) => {
     if(error.message==='conversation_not_found' || error.message==='message_not_found')return send(res,404,{error:error.message});
     if(error.message==='idempotency_conflict' || error.message==='webhook_replay')return send(res,409,{error:error.message});
     if(error.message==='invalid_webhook_signature' || error.message==='consent_required')return send(res,403,{error:error.message});
-    if(error.message==='provider_not_configured' || error.message==='message_storage_unconfigured')return send(res,503,{error:error.message});
+    if(['provider_not_configured','message_storage_unconfigured','turn_not_configured','turn_unavailable'].includes(error.message))return send(res,503,{error:error.message});
     if(error.message==='message_rate_limited')return send(res,429,{error:error.message});
     if(error.message==='invalid_push_token') return send(res,400,{error:'invalid_push_token'});
     if(error.code==='23505') return send(res,409,{error:'identity_conflict'});
