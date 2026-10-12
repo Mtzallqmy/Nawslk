@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
 }
 android {
     namespace = "com.nawslk.app"
@@ -22,7 +23,12 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 }
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 dependencies {
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+    testImplementation("androidx.room:room-testing:2.6.1")
     implementation("com.google.firebase:firebase-messaging:24.1.1")
     implementation("io.github.webrtc-sdk:android:125.6422.07")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
