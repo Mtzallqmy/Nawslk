@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Device-local demo call history. No audio or sensitive credentials are stored. */
+/** Device-local demo and WebRTC call metadata. No audio or credentials are stored. */
 class CallHistoryStore(context: Context) {
     private val prefs = context.getSharedPreferences("demo_call_history", Context.MODE_PRIVATE)
 

@@ -9,7 +9,7 @@ Preserved Stage 1 local owner/PIN/DataStore and Stage 2 owner bootstrap/PostgreS
 ## Evidence
 
 - Android code plus existing unit tests passed at commits `3733c2e` and `0900d06` using `:app:compileDebugKotlin :app:testDebugUnitTest`; no APK task.
-- Backend run https://github.com/Mtzallqmy/Nawslk/actions/runs/38189328701 passed 13 Node tests, including the live PostgreSQL API suite, with zero skips. Its separate initial audio-energy test failed; the test graph was corrected in `b5ca22f` and must be evaluated on the latest run.
+- Backend run https://github.com/Mtzallqmy/Nawslk/actions/runs/38189328701 passed 13 Node tests, including the live PostgreSQL API suite, with zero skips. The initial separate media test exposed absent Chromium RTP playout; attaching a playback element fixed the harness. Backend run https://github.com/Mtzallqmy/Nawslk/actions/runs/38189673170 at `2d16a1c` passed the complete suite, including bidirectional DTLS-SRTP tone audio, RTP reception, mute/unmute, hangup and media-track cleanup.
 - Production HTTPS `/health` verified as HTTP 200 with `database: connected` and `bootstrapConfigVerified: true`. Production startup requires and compares both bootstrap settings; no secrets were exposed. Railway OAuth only supplies names, so raw value/reference inspection is unavailable.
 - Existing Railway project `789d86be-99df-48ec-9c5c-8c9749cc9f10`, production `ee24148c-bf68-45ab-bf20-ea44c37b33f6`, API `7b5dc694-8a65-4583-a16c-bd5ded336f4f`, PostgreSQL `b1973c05-4cba-4cfa-bb0e-4876b1f214a3` reused.
 
@@ -20,7 +20,7 @@ Preserved Stage 1 local owner/PIN/DataStore and Stage 2 owner bootstrap/PostgreS
 | Call state transitions / local concurrency | Existing Android unit tests plus PostgreSQL participant-lock test |
 | Auth, bootstrap singleton, trusted-device permissions | Live API/PostgreSQL integration passed |
 | Expiry, offer/answer, replay and unauthorized calls | Live API/PostgreSQL integration passed |
-| Real browser WebRTC audio | Dedicated CI test measures received RTP and audio energy; latest outcome recorded separately |
+| Real browser WebRTC audio | Passed Chromium CI tone test (two isolated contexts); not a physical Android microphone call |
 | Android microphone / mute / cleanup | Implemented; physical runtime test pending |
 | Active foreground service / interruption / Bluetooth | Implemented; Android 8–15+ device matrix pending |
 | Network loss / recovery | Bounded retries and timeout implemented; external network handover/ICE restart not verified |

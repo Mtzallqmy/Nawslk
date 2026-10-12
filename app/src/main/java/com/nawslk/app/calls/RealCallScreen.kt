@@ -40,6 +40,9 @@ fun RealCallScreen() {
     var connected by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
     var elapsed by remember { mutableLongStateOf(0) }
+    val notificationsPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if(!granted) message="الإشعارات غير مسموحة؛ يمكن الرد داخل شاشة الاتصال."
+    }
     val permission=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         if(grants[Manifest.permission.RECORD_AUDIO]==true) pending?.invoke()
         else message="يلزم إذن الميكروفون لإجراء المكالمة."
@@ -73,6 +76,9 @@ fun RealCallScreen() {
         item {
             Text("المكالمات الصوتية الداخلية",style=MaterialTheme.typography.titleLarge)
             Text("WebRTC بين أجهزة موثوقة. لا يدعم الاتصال بأرقام الهاتف العادية.")
+            if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
+                OutlinedButton(onClick={notificationsPermission.launch(Manifest.permission.POST_NOTIFICATIONS)}) { Text("السماح بإشعارات المكالمات") }
+            }
             if(connected) {
                 Text("معرف جهازك: $ownId",style=MaterialTheme.typography.bodySmall)
                 OutlinedTextField(peer,{peer=it},label={Text("معرف جهاز الطرف الآخر")},singleLine=true)
