@@ -33,6 +33,7 @@ class CallRuntime private constructor(private val context: Context) {
     private var engine: WebRtcEngine? = null
     private var audio: CallAudioController? = null
     private var job: Job? = null
+    private var actionJob: Job? = null
     private var monitor: Job? = null
     private var sending: Job? = null
     private var outgoing: Channel<Pair<String,JSONObject>>? = null
@@ -86,18 +87,26 @@ class CallRuntime private constructor(private val context: Context) {
         val s = current.value ?: return
         if (s.direction != CallDirection.INCOMING || s.status != CallStatus.RINGING || busy) return
         busy = true
-        scope.launch {
+        actionJob = scope.launch {
             try {
                 prepareMedia(s.id)
                 api.request("POST","/v1/calls/sessions/${s.id}/accept")
                 mutable.value = s.copy(status = CallStatus.CONNECTING)
-            } catch (_: Exception) { finish(CallStatus.FAILED,"تعذر الرد. تحقق من إذن الميكروفون وإعداد TURN.") }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { finish(CallStatus.FAILED,"تعذر الرد. تحقق من إذن الميكروفون وإعداد TURN.") }
             finally { busy = false }
         }
     }
     fun reject() {
         val s = current.value ?: return
-        scope.launch { runCatching { api.request("POST","/v1/calls/sessions/${s.id}/reject") }; finish(CallStatus.REJECTED,null) }
+        if (busy) return
+        busy = true
+        actionJob = scope.launch {
+            try { api.request("POST","/v1/calls/sessions/${s.id}/reject"); finish(CallStatus.REJECTED,null) }
+            catch(cancelled: CancellationException) { throw cancelled }
+            catch(_: Exception) { finish(CallStatus.REJECTED,null) }
+            finally { busy=false }
+        }
     }
     private suspend fun prepareMedia(id: String) {
         val data = api.request("GET","/v1/calls/ice-config").getJSONArray("iceServers")
@@ -204,6 +213,8 @@ class CallRuntime private constructor(private val context: Context) {
         // Release microphone first; signaling shutdown must never hold media resources.
         runCatching { engine?.close() }; engine=null
         runCatching { audio?.release() }; audio=null
+        actionJob?.cancel(); actionJob=null
+        busy=false
         job?.cancel(); job=null
         outgoing?.close(); outgoing=null
         sending?.cancel(); sending=null

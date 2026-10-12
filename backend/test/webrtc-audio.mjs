@@ -37,6 +37,10 @@ try {
    const output=window.audio.createMediaStreamDestination(); oscillator.connect(output); oscillator.start();
    window.track=output.stream.getAudioTracks()[0]; window.pc.addTrack(window.track,output.stream);
    window.pc.ontrack=e=>{
+    // Attach a media element as well as the analyser so Chromium starts RTP playout.
+    const playback=document.createElement('audio'); playback.autoplay=true; playback.volume=0;
+    playback.srcObject=e.streams[0]; document.body.appendChild(playback);
+    playback.play().catch(()=>{});
     const source=window.audio.createMediaStreamSource(e.streams[0]);
     window.analyser=window.audio.createAnalyser(); source.connect(window.analyser);
     const sink=window.audio.createGain(); sink.gain.value=0; window.analyser.connect(sink); sink.connect(window.audio.destination);

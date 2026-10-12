@@ -92,13 +92,13 @@ class WebRtcEngine(
     override fun close() {
         if (closed) return
         closed = true
-        track.setEnabled(false)
-        peer.close()
-        peer.dispose()
-        track.dispose()
-        source.dispose()
-        factory.dispose()
-        module.release()
+        runCatching { track.setEnabled(false) }
+        runCatching { peer.close() }
+        runCatching { peer.dispose() }
+        runCatching { track.dispose() }
+        runCatching { source.dispose() }
+        runCatching { factory.dispose() }
+        runCatching { module.release() }
         pendingIce.clear()
     }
 }
