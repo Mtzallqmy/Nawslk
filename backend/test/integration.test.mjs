@@ -67,5 +67,5 @@ test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocatio
     assert.equal((await api('/v1/me',{token:peer.token})).status,401);
     assert.equal((await api('/v1/calls/sessions/'+last.id,{token:owner.token})).body.end_reason,'device_revoked');
     assert.equal((await api('/v1/bootstrap',setup)).status,409);
-  } finally { child.kill('SIGTERM'); await new Promise(r=>child.once('exit',r)); await db.end(); }
+  } finally { child.kill('SIGTERM'); if(child.exitCode===null) await new Promise(r=>child.once('exit',r)); await db.end(); }
 });

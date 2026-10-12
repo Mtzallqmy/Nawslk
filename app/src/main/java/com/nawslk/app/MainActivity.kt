@@ -167,7 +167,12 @@ private fun Home(email: String) {
             Text(tabs[tab], style = MaterialTheme.typography.headlineMedium)
             when (tab) {
                 0 -> Text("مرحبًا بك في نوصلك. المكالمات الداخلية قيد الاختبار؛ خدمات أرقام الهاتف والرسائل في مراحل لاحقة.")
-                1 -> com.nawslk.app.calls.RealCallScreen()
+                1 -> {
+                    var demo by remember { mutableStateOf(false) }
+                    val currentCall by com.nawslk.app.calls.CallRuntime.get(context).current.collectAsState()
+                    OutlinedButton(onClick={ demo=!demo },enabled=currentCall==null) { Text(if(demo) "المكالمات الصوتية الداخلية" else "فتح الجلسة المحلية التجريبية") }
+                    if(demo) CallScreen(remember { CallHistoryStore(context) }) else com.nawslk.app.calls.RealCallScreen()
+                }
                 2 -> Text("الرسائل: سيتم ربط مزود SMS في مرحلة لاحقة.")
                 3 -> Text("الأرقام: ستظهر الأرقام الفعلية بعد ربط مزود الاتصالات.")
                 else -> SettingsContent(email)

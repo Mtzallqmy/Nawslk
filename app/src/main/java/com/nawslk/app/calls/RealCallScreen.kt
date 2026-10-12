@@ -36,6 +36,7 @@ fun RealCallScreen() {
     var message by remember { mutableStateOf("") }
     var ownId by remember { mutableStateOf("") }
     var isOwner by remember { mutableStateOf(false) }
+    var devices by remember { mutableStateOf<List<Pair<String,String>>>(emptyList()) }
     var connected by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
     var elapsed by remember { mutableLongStateOf(0) }
@@ -58,6 +59,8 @@ fun RealCallScreen() {
         try {
             val profile=runtime.api.request("GET","/v1/me")
             ownId=profile.getString("deviceId"); isOwner=profile.getBoolean("isOwner"); connected=true
+            val registered=runtime.api.request("GET","/v1/devices").getJSONArray("devices")
+            devices=(0 until registered.length()).map { val d=registered.getJSONObject(it); d.getString("id") to d.getString("label") }
             runtime.watchIncoming()
         } catch (_: Exception) { connected=false; message="اربط المالك من حسابي أو استخدم دعوة جهاز موثوق." }
     }
@@ -84,6 +87,13 @@ fun RealCallScreen() {
                         SecureTokenStore(context).save(result.getString("token")); invite=""; refresh()
                     }catch(_:Exception){message="دعوة غير صالحة أو منتهية، أو الخادم غير متاح."}
                 }},enabled=invite.isNotBlank()) { Text("ربط هذا الجهاز بالدعوة") }
+            }
+            if(isOwner) devices.filter { it.first!=ownId }.forEach { device ->
+                Text("${device.second}: ${device.first}",style=MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick={scope.launch {
+                    try { runtime.api.request("DELETE","/v1/devices/${device.first}"); refresh(); message="تم إبطال الجهاز ومكالماته." }
+                    catch(_:Exception){message="تعذر إبطال الجهاز."}
+                }}) { Text("إبطال الجهاز") }
             }
             call?.let { s ->
                 Text("الطرف: ${s.peer}")

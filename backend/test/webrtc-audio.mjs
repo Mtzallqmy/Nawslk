@@ -39,6 +39,7 @@ try {
    window.pc.ontrack=e=>{
     const source=window.audio.createMediaStreamSource(e.streams[0]);
     window.analyser=window.audio.createAnalyser(); source.connect(window.analyser);
+    const sink=window.audio.createGain(); sink.gain.value=0; window.analyser.connect(sink); sink.connect(window.audio.destination);
    };
   });
  }
@@ -81,6 +82,11 @@ try {
  }
  console.log('PASS: authorized bidirectional DTLS-SRTP audio, mute/unmute, signaling hangup and track cleanup');
  console.log('Scope: generated tone in Chromium on CI loopback; Android microphone, Bluetooth, external NAT/TURN and device interruptions remain unverified.');
+} catch(error) {
+ if(browser) for(const context of browser.contexts()) for(const page of context.pages()) {
+  console.log('Media diagnostics:',await page.evaluate(async()=>({audioState:window.audio?.state,connection:window.pc?.connectionState,hasAnalyser:!!window.analyser,trackState:window.track?.readyState,stats:window.pc?[...(await window.pc.getStats()).values()].filter(s=>s.type==='inbound-rtp' && s.kind==='audio').map(s=>({bytes:s.bytesReceived,energy:s.totalAudioEnergy,samples:s.totalSamplesReceived})):[]})).catch(()=>({unavailable:true})));
+ }
+ throw error;
 } finally {
- await browser?.close(); child.kill('SIGTERM'); await new Promise(r=>child.once('exit',r)); await db.end();
+ await browser?.close(); child.kill('SIGTERM'); if(child.exitCode===null) await new Promise(r=>child.once('exit',r)); await db.end();
 }
