@@ -8,7 +8,7 @@ const database = process.env.TEST_DATABASE_URL;
 test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocation', {skip: !database, timeout: 30000}, async () => {
   // Only an explicitly provided disposable database may be used by this suite.
   const db = new Pool({connectionString:database});
-  await db.query('DROP TABLE IF EXISTS signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
+  await db.query('DROP TABLE IF EXISTS call_push_outbox,device_push_tokens,signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
   const secret = 'integration-only-bootstrap-secret-32-bytes';
   const child = spawn(process.execPath,['src/server.mjs'],{env:{...process.env,DATABASE_URL:database,BOOTSTRAP_SECRET:secret,BOOTSTRAP_SECRET_SHA256:hashSecret(secret),PORT:'3099'},stdio:'ignore'});
   const api = async (path,{token,body,method='GET',bootstrap}={}) => {

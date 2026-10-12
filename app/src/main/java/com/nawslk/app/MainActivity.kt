@@ -33,6 +33,11 @@ private val LAST_FAILURE = androidx.datastore.preferences.core.longPreferencesKe
 private data class OwnerState(val email: String?, val salt: String?, val hash: String?, val failures: Int, val lastFailure: Long)
 
 class MainActivity : ComponentActivity() {
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if(intent.hasExtra("incoming_call")) recreate()
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -148,7 +153,7 @@ private fun OwnerUnlock(canAttempt: Boolean, onUnlock: (String) -> Boolean) {
 @Composable
 private fun Home(email: String) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(if((context as? android.app.Activity)?.intent?.hasExtra("incoming_call")==true) 1 else 0) }
     val tabs = listOf("الرئيسية", "الاتصال", "الرسائل", "الأرقام", "حسابي")
     Scaffold(
         topBar = { Surface(tonalElevation = 3.dp) {

@@ -8,7 +8,7 @@ import { hashSecret } from '../src/auth.mjs';
 import assert from 'node:assert/strict';
 const db = new Pool({connectionString:process.env.TEST_DATABASE_URL});
 assert.ok(process.env.TEST_DATABASE_URL,'Disposable TEST_DATABASE_URL is required');
-await db.query('DROP TABLE IF EXISTS signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
+await db.query('DROP TABLE IF EXISTS call_push_outbox,device_push_tokens,signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
 const secret='webrtc-integration-bootstrap-secret';
 const child=spawn(process.execPath,['src/server.mjs'],{env:{...process.env,DATABASE_URL:process.env.TEST_DATABASE_URL,BOOTSTRAP_SECRET:secret,BOOTSTRAP_SECRET_SHA256:hashSecret(secret),PORT:'3100'},stdio:'ignore'});
 let browser;

@@ -33,6 +33,7 @@ fun RealCallScreen() {
     val history by runtime.history.collectAsState()
     var peer by remember { mutableStateOf("") }
     var invite by remember { mutableStateOf("") }
+    var pushReady by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var ownId by remember { mutableStateOf("") }
     var isOwner by remember { mutableStateOf(false) }
@@ -65,6 +66,7 @@ fun RealCallScreen() {
             val registered=runtime.api.request("GET","/v1/devices").getJSONArray("devices")
             devices=(0 until registered.length()).map { val d=registered.getJSONObject(it); d.getString("id") to d.getString("label") }
             runtime.watchIncoming()
+            pushReady=try { CallPush.register(context,runtime.api) } catch(_:Exception){false}
         } catch (_: Exception) { connected=false; message="اربط المالك من حسابي أو استخدم دعوة جهاز موثوق." }
     }
     LaunchedEffect(Unit) { refresh() }
@@ -118,7 +120,7 @@ fun RealCallScreen() {
             }
             if(message.isNotEmpty()) Text(message)
             error?.let { Text(it,color=MaterialTheme.colorScheme.error) }
-            Text("استقبال الوارد أثناء فتح شاشة الاتصال. استمرار المكالمة النشطة مدعوم بالخدمة؛ استقبال التطبيق المغلق لم يُفعّل بعد.",style=MaterialTheme.typography.bodySmall)
+            Text(if(pushReady) "إشعارات الوارد مهيأة عبر Firebase. قد يمنع Android وصولها عند فرض إيقاف التطبيق أو تقييد البطارية. الرد يفتح التطبيق ويطلب إذن الميكروفون." else "Firebase غير مهيأ أو غير متاح؛ استقبال الوارد أثناء فتح شاشة الاتصال فقط.",style=MaterialTheme.typography.bodySmall)
             Text("السجل المحلي",style=MaterialTheme.typography.titleMedium)
         }
         items(history.filter { it.transport==CallTransport.WEBRTC },key={it.id}) { s ->

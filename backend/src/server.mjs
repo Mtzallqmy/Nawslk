@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { ensurePushSchema, registerPushToken, pushConfiguration, FcmSender, dispatchPush } from './push.mjs';
 import { Pool } from 'pg';
 import { randomUUID, createHmac } from 'node:crypto';
 import { ensureDevices, authenticate, issueInvite, redeemInvite, authorizedPeer, uuid, transaction } from './devices.mjs';
@@ -19,6 +20,17 @@ if (process.env.BOOTSTRAP_SECRET && !secureEqualHash(hashSecret(process.env.BOOT
 }
 await ensureDevices(pool);
 await ensureSignalingSchema(pool);
+await ensurePushSchema(pool);
+const pushConfig=pushConfiguration();
+const pushSender=pushConfig ? new FcmSender(pushConfig) : null;
+let pushing=false;
+const pushWorker=setInterval(async()=>{
+  if(pushing) return;
+  pushing=true;
+  try { await dispatchPush(pool,pushSender,process.env.BOOTSTRAP_SECRET); }
+  catch { console.warn('{"event":"call_push_worker_failed"}'); }
+  finally { pushing=false; }
+},3000).unref();
 const authLimit = new RateLimiter({ max: 10 });
 const requestLimit = new RateLimiter({ max: 240 });
 const cleanup = setInterval(() => {
@@ -93,6 +105,20 @@ const server = http.createServer(async (req, res) => {
         if (!owner.is_owner) return send(res,403,{error:'forbidden'});
         return send(res,201,await issueInvite(pool,owner.id));
       }
+      if (req.method === 'GET' && path === '/v1/push/config') {
+        if(!pushConfig) return send(res,503,{error:'push_not_configured'});
+        return send(res,200,pushConfig.android);
+      }
+      if (req.method === 'PUT' && path === '/v1/devices/push-token') {
+        const {token}=await readBody(req);
+        if(!process.env.BOOTSTRAP_SECRET) return send(res,503,{error:'push_not_configured'});
+        await registerPushToken(pool,participantId,token,process.env.BOOTSTRAP_SECRET);
+        return send(res,200,{status:'registered'});
+      }
+      if (req.method === 'DELETE' && path === '/v1/devices/push-token') {
+        await pool.query('DELETE FROM device_push_tokens WHERE device_id=$1',[participantId]);
+        return send(res,200,{status:'unregistered'});
+      }
       if (req.method === 'GET' && path === '/v1/devices') {
         const result = await pool.query(`SELECT id,label FROM trusted_devices WHERE owner_id=$1 AND revoked_at IS NULL
           UNION ALL SELECT id,'المالك' AS label FROM owner_device WHERE id=$1 AND revoked_at IS NULL`,[owner.owner_id]);
@@ -105,6 +131,7 @@ const server = http.createServer(async (req, res) => {
         const revoked = await transaction(pool, async db => {
           await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[revoke[1]]);
           const result = await db.query('UPDATE trusted_devices SET revoked_at=NOW() WHERE id=$1 AND owner_id=$2 RETURNING id',[revoke[1],owner.owner_id]);
+          if (result.rowCount) await db.query('DELETE FROM device_push_tokens WHERE device_id=$1',[revoke[1]]);
           if (result.rowCount) await db.query("UPDATE signaling_sessions SET state='ended',end_reason='device_revoked' WHERE caller_id=$1 OR callee_id=$1",[revoke[1]]);
           return result;
         });
@@ -168,6 +195,8 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     if (error.message === 'body_too_large') return send(res, 413, { error: 'body_too_large' });
     if (error instanceof SyntaxError) return send(res, 400, { error: 'invalid_json' });
+    if(error.message==='invalid_push_token') return send(res,400,{error:'invalid_push_token'});
+    if(error.code==='23505') return send(res,409,{error:'identity_conflict'});
     if (error.message === 'invalid_invite') return send(res,400,{error:'invalid_invite'});
     if (error.message === 'forbidden') return send(res,403,{error:'forbidden'});
     if (['participant_busy','invalid_call_state','signal_replay_conflict','signal_limit'].includes(error.message)) return send(res,409,{error:error.message});
@@ -180,4 +209,4 @@ server.listen(port, '0.0.0.0');
 
 server.requestTimeout = 15000;
 server.headersTimeout = 10000;
-process.on('SIGTERM', () => { clearInterval(cleanup); server.close(() => pool.end()); });
+process.on('SIGTERM', () => { clearInterval(cleanup); clearInterval(pushWorker); server.close(() => pool.end()); });

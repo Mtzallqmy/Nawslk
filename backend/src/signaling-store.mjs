@@ -26,6 +26,7 @@ export async function createSession(pool, callerId, calleeId, ownerId) {
       AND (caller_id=ANY($1::uuid[]) OR callee_id=ANY($1::uuid[]))`, [[callerId,calleeId]]);
     if (busy.rowCount) throw new Error('participant_busy');
     const result = await db.query('INSERT INTO signaling_sessions(id,caller_id,callee_id) VALUES($1,$2,$3) RETURNING *', [randomUUID(),callerId,calleeId]);
+    await db.query('INSERT INTO call_push_outbox(session_id,device_id) VALUES($1,$2)',[result.rows[0].id,calleeId]);
     return result.rows[0];
   });
 }

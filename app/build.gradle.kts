@@ -22,6 +22,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
+    implementation("com.google.firebase:firebase-messaging:24.1.1")
     implementation("io.github.webrtc-sdk:android:125.6422.07")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
