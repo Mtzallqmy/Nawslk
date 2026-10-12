@@ -11,8 +11,10 @@ import java.net.URL
  * Owner bootstrap requires a separate out-of-band secret and is intentionally not automatic.
  */
 class BackendClient(private val baseUrl: String = "https://nawslk-api-production.up.railway.app") {
+    init { require(baseUrl.startsWith("https://")) }
     suspend fun health(): Boolean = withContext(Dispatchers.IO) {
         val connection = URL("$baseUrl/health").openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = false
         connection.connectTimeout = 7000
         connection.readTimeout = 7000
         connection.requestMethod = "GET"
@@ -27,6 +29,7 @@ class BackendClient(private val baseUrl: String = "https://nawslk-api-production
     suspend fun ownerProfile(token: String): String = withContext(Dispatchers.IO) {
         require(token.length >= 32)
         val connection = URL("$baseUrl/v1/me").openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = false
         connection.connectTimeout = 7000
         connection.readTimeout = 7000
         connection.requestMethod = "GET"
@@ -42,6 +45,7 @@ class BackendClient(private val baseUrl: String = "https://nawslk-api-production
     suspend fun bootstrap(email: String, secret: String): String = withContext(Dispatchers.IO) {
         require(secret.length >= 32)
         val connection = URL("$baseUrl/v1/bootstrap").openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = false
         connection.connectTimeout = 7000
         connection.readTimeout = 7000
         connection.requestMethod = "POST"

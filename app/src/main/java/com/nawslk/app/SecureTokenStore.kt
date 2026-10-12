@@ -45,7 +45,7 @@ class SecureTokenStore(context: Context) {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
             String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), Charsets.UTF_8)
-        } catch (_: Exception) { null }
+        } catch (_: Exception) { clear(); null }
     }
 
     fun clear() = prefs.edit().clear().apply()

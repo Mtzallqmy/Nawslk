@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
             }.collectAsState(initial = null)
             var unlocked by remember { mutableStateOf(false) }
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                MaterialTheme {
+                MaterialTheme(colorScheme = if(androidx.compose.foundation.isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                     when {
                         owner == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                         owner!!.email == null || owner!!.salt == null || owner!!.hash == null ->
@@ -166,8 +166,8 @@ private fun Home(email: String) {
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(tabs[tab], style = MaterialTheme.typography.headlineMedium)
             when (tab) {
-                0 -> Text("مرحبًا بك في نوصلك. المكالمات والرسائل الحقيقية غير مفعّلة بعد.")
-                1 -> CallScreen(remember { CallHistoryStore(context) })
+                0 -> Text("مرحبًا بك في نوصلك. المكالمات الداخلية قيد الاختبار؛ خدمات أرقام الهاتف والرسائل في مراحل لاحقة.")
+                1 -> com.nawslk.app.calls.RealCallScreen()
                 2 -> Text("الرسائل: سيتم ربط مزود SMS في مرحلة لاحقة.")
                 3 -> Text("الأرقام: ستظهر الأرقام الفعلية بعد ربط مزود الاتصالات.")
                 else -> SettingsContent(email)
@@ -206,7 +206,8 @@ private fun SettingsContent(email: String) {
     val scope = rememberCoroutineScope()
     var secret by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
-    val savedToken = remember { SecureTokenStore(context).load() }
+    var savedToken by remember { mutableStateOf(SecureTokenStore(context).load()) }
+    LaunchedEffect(savedToken) { savedToken?.let { token -> message = try { BackendClient().ownerProfile(token); "تم التحقق من جلسة الجهاز بالخادم." } catch (_: Exception) { "تعذر التحقق من الجلسة؛ قد يكون الخادم غير متاح أو الرمز مبطلًا." } } }
     if (savedToken == null) {
         OutlinedTextField(secret, { secret = it }, label = { Text("سر تهيئة الخادم (مرة واحدة)") },
             visualTransformation = PasswordVisualTransformation(), singleLine = true)
@@ -215,6 +216,7 @@ private fun SettingsContent(email: String) {
                 message = try {
                     val token = BackendClient().bootstrap(email, secret)
                     SecureTokenStore(context).save(token)
+                    savedToken = token
                     secret = ""
                     "تم ربط المالك بالخادم بنجاح"
                 } catch (_: Exception) {

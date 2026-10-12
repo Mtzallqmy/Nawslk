@@ -19,7 +19,9 @@ class CallHistoryStore(context: Context) {
                 transport = CallTransport.valueOf(o.getString("transport")),
                 status = CallStatus.valueOf(o.getString("status")),
                 startedAtMs = o.getLong("startedAtMs"),
-                endedAtMs = if (o.has("endedAtMs")) o.getLong("endedAtMs") else null
+                endedAtMs = if (o.has("endedAtMs")) o.getLong("endedAtMs") else null,
+                durationMs = o.optLong("durationMs"),
+                failureReason = if(o.has("failureReason")) o.getString("failureReason") else null
             )
         }
     } catch (_: Exception) { emptyList() }
@@ -34,6 +36,8 @@ class CallHistoryStore(context: Context) {
                 .put("transport", session.transport.name)
                 .put("status", session.status.name)
                 .put("startedAtMs", session.startedAtMs)
+                .put("durationMs",session.durationMs)
+            session.failureReason?.let { o.put("failureReason",it) }
             session.endedAtMs?.let { o.put("endedAtMs", it) }
             arr.put(o)
         }

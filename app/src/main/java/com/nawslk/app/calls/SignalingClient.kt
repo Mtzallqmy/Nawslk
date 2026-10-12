@@ -14,14 +14,17 @@ class SignalingClient(
     private val tokenProvider: () -> String?,
     private val baseUrl: String = "https://nawslk-api-production.up.railway.app"
 ) {
-    private suspend fun request(method: String, path: String, body: JSONObject? = null): JSONObject =
+    init { require(baseUrl.startsWith("https://")) }
+    suspend fun request(method: String, path: String, body: JSONObject? = null): JSONObject =
         withContext(Dispatchers.IO) {
-            val token = requireNotNull(tokenProvider()) { "Owner not connected to server" }
+            val token = tokenProvider()
+            if (path != "/v1/devices/redeem") requireNotNull(token) { "Device not connected to server" }
             val connection = URL("$baseUrl$path").openConnection() as HttpURLConnection
+            connection.instanceFollowRedirects = false
             connection.connectTimeout = 8000
             connection.readTimeout = 8000
             connection.requestMethod = method
-            connection.setRequestProperty("Authorization", "Bearer $token")
+            if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
             connection.setRequestProperty("Accept", "application/json")
             try {
                 if (body != null) {
@@ -45,7 +48,7 @@ class SignalingClient(
 
     suspend fun sendSignal(id: String, kind: String, payload: JSONObject): JSONObject =
         request("POST", "/v1/calls/sessions/$id/signals",
-            JSONObject().put("kind", kind).put("payload", payload))
+            JSONObject().put("kind", kind).put("payload", payload).put("messageId", java.util.UUID.randomUUID().toString()))
 
     suspend fun signals(id: String, after: Long = 0): JSONObject =
         request("GET", "/v1/calls/sessions/$id/signals?after=$after")

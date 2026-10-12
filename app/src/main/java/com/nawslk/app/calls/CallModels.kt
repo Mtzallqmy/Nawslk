@@ -11,5 +11,7 @@ data class CallSession(
     val transport: CallTransport,
     val status: CallStatus,
     val startedAtMs: Long,
-    val endedAtMs: Long? = null
+    val endedAtMs: Long? = null,
+    val durationMs: Long = 0,
+    val failureReason: String? = null
 )
