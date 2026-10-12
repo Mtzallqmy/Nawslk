@@ -30,6 +30,13 @@ const pushConfig=pushConfiguration();
 const iceConfig=iceConfiguration();
 const iceProvider=new IceProvider(iceConfig);
 const infobip=new InfobipProviderAdapter(infobipConfiguration());
+// One bounded read-only probe per startup; keys and upstream records never enter logs.
+if(infobip.config) {
+  const verification=await infobip.checkReadAccess();
+  const owners=await pool.query('SELECT id FROM owner_device WHERE revoked_at IS NULL ORDER BY created_at LIMIT 1');
+  if(owners.rowCount)await recordCheck(pool,{owner_id:owners.rows[0].id},verification);
+  console.log(JSON.stringify({event:'infobip_read_access',...verification}));
+}
 const pushSender=pushConfig ? new FcmSender(pushConfig) : null;
 let pushing=false;
 const pushWorker=setInterval(async()=>{
