@@ -1,0 +1,71 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { Pool } from 'pg';
+import { hashSecret } from '../src/auth.mjs';
+import { randomUUID } from 'node:crypto';
+const database = process.env.TEST_DATABASE_URL;
+test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocation', {skip: !database, timeout: 30000}, async () => {
+  // Only an explicitly provided disposable database may be used by this suite.
+  const db = new Pool({connectionString:database});
+  await db.query('DROP TABLE IF EXISTS signaling_messages,signaling_sessions,device_invites,trusted_devices,owner_device CASCADE');
+  const secret = 'integration-only-bootstrap-secret-32-bytes';
+  const child = spawn(process.execPath,['src/server.mjs'],{env:{...process.env,DATABASE_URL:database,BOOTSTRAP_SECRET:secret,BOOTSTRAP_SECRET_SHA256:hashSecret(secret),PORT:'3099'},stdio:'ignore'});
+  const api = async (path,{token,body,method='GET',bootstrap}={}) => {
+    const res = await fetch('http://127.0.0.1:3099'+path,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...(bootstrap?{'x-bootstrap-secret':bootstrap}:{})},body:body?JSON.stringify(body):undefined});
+    return {status:res.status,body:await res.json()};
+  };
+  try {
+    let ready=false;
+    for(let n=0;n<100;n++){try {if((await api('/health')).status===200){ready=true;break;}}catch{} await new Promise(r=>setTimeout(r,100));}
+    assert.ok(ready,'API startup');
+    assert.equal((await api('/v1/me')).status,401);
+    const setup = {method:'POST',bootstrap:secret,body:{email:'owner@example.com'}};
+    const results = await Promise.all([api('/v1/bootstrap',setup),api('/v1/bootstrap',setup)]);
+    assert.deepEqual(results.map(r=>r.status).sort(),[201,409]);
+    const owner=results.find(r=>r.status===201).body;
+    assert.equal((await api('/v1/me',{token:owner.token})).body.isOwner,true);
+    const invitation=await api('/v1/devices/invites',{method:'POST',token:owner.token});
+    const redemption={method:'POST',body:{invite:invitation.body.invite,label:'phone 2'}};
+    const redeemed=await Promise.all([api('/v1/devices/redeem',redemption),api('/v1/devices/redeem',redemption)]);
+    assert.deepEqual(redeemed.map(r=>r.status).sort(),[201,400]);
+    const peer=redeemed.find(r=>r.status===201).body;
+    assert.equal((await api('/v1/devices/invites',{method:'POST',token:peer.token})).status,403);
+    const otherInvite=await api('/v1/devices/invites',{method:'POST',token:owner.token});
+    const other=(await api('/v1/devices/redeem',{method:'POST',body:{invite:otherInvite.body.invite,label:'phone 3'}})).body;
+    const expiredInvite=await api('/v1/devices/invites',{method:'POST',token:owner.token});
+    await db.query("UPDATE device_invites SET expires_at=NOW()-INTERVAL '1 second' WHERE token_hash=$1",[hashSecret(expiredInvite.body.invite)]);
+    assert.equal((await api('/v1/devices/redeem',{method:'POST',body:{invite:expiredInvite.body.invite,label:'expired'}})).status,400);
+    const sessions=await Promise.all([api('/v1/calls/sessions',{method:'POST',token:owner.token,body:{peerId:peer.deviceId}}),api('/v1/calls/sessions',{method:'POST',token:peer.token,body:{peerId:owner.deviceId}})]);
+    assert.deepEqual(sessions.map(r=>r.status).sort(),[201,409]);
+    const s=sessions.find(r=>r.status===201).body;
+    const caller=s.caller_id===owner.deviceId?owner:peer,callee=s.callee_id===owner.deviceId?owner:peer;
+    const path='/v1/calls/sessions/'+s.id;
+    assert.equal((await api(path,{token:other.token})).status,404);
+    assert.equal((await api(path+'/accept',{method:'POST',token:caller.token})).status,403);
+    assert.equal((await api('/v1/calls/incoming',{token:callee.token})).body.sessions.length,1);
+    const signal={kind:'offer',payload:{sdp:'v=0\r\ns=integration\r\n'},messageId:randomUUID()};
+    assert.equal((await api(path+'/signals',{method:'POST',token:caller.token,body:signal})).status,409);
+    assert.equal((await api(path+'/accept',{method:'POST',token:callee.token})).status,200);
+    assert.equal((await api(path+'/signals',{method:'POST',token:callee.token,body:signal})).status,403);
+    assert.equal((await api(path+'/signals',{method:'POST',token:caller.token,body:signal})).status,201);
+    assert.equal((await api(path+'/signals',{method:'POST',token:caller.token,body:signal})).body.duplicate,true);
+    assert.equal((await api(path+'/signals',{method:'POST',token:caller.token,body:{...signal,messageId:randomUUID()}})).status,409);
+    assert.equal((await api(path+'/signals',{token:caller.token})).body.messages.length,0);
+    const messages=(await api(path+'/signals',{token:callee.token})).body.messages;
+    assert.equal(messages.length,1);
+    assert.equal((await api(path+'/signals?after='+messages[0].id,{token:callee.token})).body.messages.length,0);
+    assert.equal((await api(path+'/signals',{method:'POST',token:callee.token,body:{kind:'answer',payload:{sdp:'v=0\r\ns=answer\r\n'},messageId:randomUUID()}})).status,201);
+    await db.query("UPDATE signaling_sessions SET expires_at=NOW()-INTERVAL '1 second' WHERE id=$1",[s.id]);
+    assert.equal((await api(path,{token:caller.token})).body.expired,true);
+    assert.equal((await api(path+'/heartbeat',{method:'POST',token:caller.token})).status,409);
+    assert.equal((await api(path+'/signals',{method:'POST',token:caller.token,body:signal})).status,409);
+    const next=(await api('/v1/calls/sessions',{method:'POST',token:owner.token,body:{peerId:peer.deviceId}})).body;
+    assert.equal((await api('/v1/calls/sessions/'+next.id+'/reject',{method:'POST',token:peer.token})).body.end_reason,'rejected');
+    const last=(await api('/v1/calls/sessions',{method:'POST',token:owner.token,body:{peerId:peer.deviceId}})).body;
+    assert.equal((await api('/v1/devices/'+peer.deviceId,{method:'DELETE',token:owner.token})).status,200);
+    assert.equal((await api('/v1/me',{token:peer.token})).status,401);
+    assert.equal((await api('/v1/calls/sessions/'+last.id,{token:owner.token})).body.end_reason,'device_revoked');
+    assert.equal((await api('/v1/bootstrap',setup)).status,409);
+  } finally { child.kill('SIGTERM'); await new Promise(r=>child.once('exit',r)); await db.end(); }
+});

@@ -28,8 +28,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install
+      - run: npm ci
       - run: npm test
+        env:
+          TEST_DATABASE_URL: postgresql://nawslk:local_ci_only@localhost:5432/nawslk_test
       - name: Smoke test API with PostgreSQL
         env:
           DATABASE_URL: postgresql://nawslk:local_ci_only@localhost:5432/nawslk_test
