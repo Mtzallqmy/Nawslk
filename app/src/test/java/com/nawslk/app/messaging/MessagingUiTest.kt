@@ -19,12 +19,13 @@ import org.robolectric.annotation.SQLiteMode
 class MessagingUiTest {
     @get:Rule val compose=createComposeRule()
     @Test fun offlineMessageRemainsQueuedWithExplicitDemoLabel() {
-        val context=RuntimeEnvironment.getApplication<Application>()
+        val context=RuntimeEnvironment.getApplication()
         val repository=MessagesRepository(MessagesDatabase.get(context),"local:ui-owner",null)
         runBlocking { repository.create("+967700000001","اختبار الواجهة",true) }
         compose.setContent { MaterialTheme { MessagesScreen("ui-owner") } }
         compose.waitUntil(15000){compose.onAllNodesWithText("اختبار الواجهة").fetchSemanticsNodes().isNotEmpty()}
         compose.onNodeWithText("اختبار الواجهة").performClick()
+        compose.waitUntil(10000){compose.onAllNodes(hasSetTextAction() and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
         compose.onNodeWithText("اكتب رسالة — تُحفظ كمسودة").performTextInput("رسالة دون اتصال")
         compose.onNodeWithText("حفظ في قائمة الانتظار").performClick()
         compose.waitUntil(15000){compose.onAllNodesWithText("في انتظار المزامنة — لم تُرسل").fetchSemanticsNodes().isNotEmpty()}
