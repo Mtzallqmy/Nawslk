@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { Pool } from 'pg';
 import { hashSecret } from '../src/auth.mjs';
 import { randomUUID, createHmac } from 'node:crypto';
-import { migrateMessaging } from '../src/messaging.mjs';
+import { migrateMessaging, encryptMessage } from '../src/messaging.mjs';
 import { dispatchPush, decryptPushToken } from '../src/push.mjs';
 const database = process.env.TEST_DATABASE_URL;
 test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocation', {skip: !database, timeout: 30000}, async () => {
@@ -124,5 +124,21 @@ test('PostgreSQL API: bootstrap, invites, scoped signaling, expiry and revocatio
     const removed=await api('/v1/conversations/'+conversationId,{method:'DELETE',token:owner.token});assert.equal(removed.status,200);
     assert.equal((await db.query('SELECT id FROM messages WHERE id=$1',[outgoing.id])).rowCount,0);
     assert.equal((await db.query('SELECT id FROM delivery_events WHERE message_id=$1',[outgoing.id])).rowCount,0);
+    const pageConversation=randomUUID();
+    await db.query("INSERT INTO conversations(id,owner_id,peer_e164,display_label,mode,consent) VALUES($1,$2,'+967700000001','paging','DEMO',TRUE)",[pageConversation,owner.deviceId]);
+    const fixture=[];
+    for(let i=0;i<55;i++){
+      const id=randomUUID(),key=randomUUID();fixture.push({id,key});
+      await db.query("INSERT INTO messages(id,owner_id,conversation_id,idempotency_key,request_hash,ciphertext,status,direction,mode,provider_key) VALUES($1,$2,$3,$4,'fixture',$5,'SENT','OUTGOING','DEMO','local-demo')",[id,owner.deviceId,pageConversation,key,encryptMessage('page '+i,secret)]);
+    }
+    const pagePath='/v1/conversations/'+pageConversation+'/messages';
+    const firstPage=(await api(pagePath,{token:owner.token})).body;assert.equal(firstPage.messages.length,50);
+    const lastPage=(await api(pagePath+'?after='+firstPage.nextCursor,{token:owner.token})).body;assert.equal(lastPage.messages.length,5);assert.equal(lastPage.nextCursor,null);
+    assert.equal(new Set([...firstPage.messages,...lastPage.messages].map(m=>m.id)).size,55);
+    assert.equal((await api(pagePath,{method:'POST',token:owner.token,body:{id:randomUUID(),idempotencyKey:randomUUID(),body:'rate limited'}})).status,429);
+    for(let i=0;i<54;i++)await db.query("INSERT INTO conversations(id,owner_id,peer_e164,display_label,mode,consent) VALUES($1,$2,'+967700000001','fixture','DEMO',TRUE)",[randomUUID(),owner.deviceId]);
+    const conversationPage=(await api('/v1/conversations',{token:owner.token})).body;assert.equal(conversationPage.conversations.length,50);
+    const conversationLast=(await api('/v1/conversations?before='+conversationPage.nextCursor,{token:owner.token})).body;assert.equal(conversationLast.conversations.length,5);
+    assert.equal(new Set([...conversationPage.conversations,...conversationLast.conversations].map(c=>c.id)).size,55);
   } finally { child.kill('SIGTERM'); if(child.exitCode===null) await new Promise(r=>child.once('exit',r)); await db.end(); }
 });

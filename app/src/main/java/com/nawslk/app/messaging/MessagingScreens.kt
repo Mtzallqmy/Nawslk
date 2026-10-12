@@ -144,8 +144,11 @@ fun NumbersScreen() {
         OutlinedButton(onClick={scope.launch {refresh()}},enabled=!loading){Text("تحديث")}
         LazyColumn {
             items(numbers,key={it.getString("id")}) {number ->
-                Text(number.getString("e164"));Text("الحالة: ${number.getString("status")}")
-                Text("الإمكانات: ${number.getJSONArray("capabilities")}")
+                Text(number.getString("e164"));Text("الحالة: "+when(NumberStatus.valueOf(number.getString("status"))){
+                    NumberStatus.AVAILABLE->"متاح";NumberStatus.RESERVED->"محجوز";NumberStatus.ACTIVE->"فعّال";NumberStatus.SUSPENDED->"معلّق";NumberStatus.EXPIRED->"انتهت الصلاحية";NumberStatus.RELEASED->"محرّر"
+                })
+                val capabilities=number.getJSONArray("capabilities")
+                Text("الإمكانات: "+(0 until capabilities.length()).mapNotNull {i->when(capabilities.getString(i)){"SMS"->"رسائل هاتفية";"VOICE"->"مكالمات";else->null}}.joinToString("، "))
                 if(!number.isNull("expires_at")) Text("الصلاحية: ${number.getString("expires_at")}")
                 HorizontalDivider()
             }
