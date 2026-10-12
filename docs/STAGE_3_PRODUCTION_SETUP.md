@@ -1,6 +1,6 @@
 # Stage 3 production activation
 
-Existing Nawslk Railway project/API/PostgreSQL only. No additional production service or paid provider has been provisioned.
+Existing Nawslk Railway project/API/PostgreSQL reused. Cloudflare TURN was activated with the user's TURN app; no additional Railway service or database was provisioned. See TURN_CLOUDFLARE_ACCEPTANCE.md for live relay evidence.
 
 ## Managed Cloudflare TURN
 
@@ -8,7 +8,7 @@ Cloudflare TURN uses its credential-generation API rather than the coturn shared
 
 `infra/turn/Probe.Dockerfile` and `backend/scripts/validate-turn.mjs` provide a disposable no-database job for production credential issuance and forced-relay generated audio on UDP, TCP and TLS separately. It needs only the Cloudflare TURN variables, has no public HTTP endpoint, and must use restartPolicy NEVER and be removed when results have been collected. It does not replace authorized two-Android-device testing. Logs contain outcomes/transport only, never long-lived or temporary credentials.
 
-## Required externally supplied settings
+## Alternate coturn and optional FCM settings
 
 Set these on the existing Railway API service, using Railway's variables UI (do not commit them):
 
@@ -37,8 +37,8 @@ Neither the service-account private key nor permanent TURN secret is shipped to 
 
 CI uses a disposable coturn container, fixed test-only credential material, forced relay candidates and actual Chromium audio transport. It tests production-style HMAC TURN credentials without creating a production TURN host. A temporary CI-only UDP firewall drop is measured using stopped RTP counts and audio recovery after restoring delivery; the rule is removed in finally cleanup. Chromium CDP packet-loss emulation did not affect established transport in the first test, so no recovery claim was based on that attempt. Physical Android microphone/headset/lifecycle and production FCM delivery still require device verification.
 
-`GET /health` reports boolean `calling.turnConfigured` and `calling.pushConfigured`, without exposing secrets. Presence/parse checks do not prove external connectivity. The live production deployment currently has no TURN/Firebase settings; that absence is a release blocker, not something to replace with public borrowed credentials.
+`GET /health` reports boolean `calling.turnConfigured` and `calling.pushConfigured`, without exposing secrets. Presence/parse checks do not prove external connectivity. Production Cloudflare TURN is now configured and externally verified on UDP/TCP/TLS; Firebase remains unconfigured. Physical-device and background delivery acceptance remain open.
 
 ## Phase ordering
 
-Stage 3 production acceptance remains conditional on live TURN/Firebase and device tests. Independent Stage 4 demo messaging work is now prepared on `stage-4-messaging-numbers` to continue implementation without pretending those external inputs are present. See STAGE_4_ACCEPTANCE.md. This does not close Stage 3, activate a telecom provider, authorize Stage 5/6 release, or package an APK.
+Stage 3 production acceptance remains conditional on device tests and the original background incoming-call requirement. Independent Stage 4 demo messaging work is deployed on `stage-4-messaging-numbers`; see STAGE_4_ACCEPTANCE.md. TURN is activated; this does not close all of Stage 3, activate a telecom provider, authorize Stage 5/6 release, or package an APK.

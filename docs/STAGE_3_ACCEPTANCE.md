@@ -1,6 +1,6 @@
 # Stage 3 acceptance — 2026-10-12
 
-Decision: **IN PROGRESS**. All implementation changes are on `stage-3-calling-webrtc`, without main merge or APK packaging.
+Decision: **IN PROGRESS**. Initial work is on `stage-3-calling-webrtc`; subsequent TURN and independent demo messaging work is on its descendant `stage-4-messaging-numbers`, without main merge or APK packaging. Production Cloudflare TURN is now activated; current evidence supersedes the historical unconfigured state below: see TURN_CLOUDFLARE_ACCEPTANCE.md.
 
 ## Confirmed baseline and changes
 
@@ -26,13 +26,13 @@ Preserved Stage 1 local owner/PIN/DataStore and Stage 2 owner bootstrap/PostgreS
 | Network loss / recovery | Bounded retries and timeout implemented; external network handover/ICE restart not verified |
 | Incoming call UI / notification | FCM sender/receiver, registration and outbox implemented; live configuration/delivery verification pending |
 | Local call history | Metadata save/load implemented; device validation pending |
-| TURN across independent networks | Unconfigured; endpoint returns 503 rather than claiming STUN guarantees |
+| Production TURN | Cloudflare UDP/TCP/TLS forced-relay generated audio passed; physical cross-network Android acceptance pending |
 | PSTN | Separate unconfigured provider interface; no ordinary-number calling claim |
-| APK / Stage 4 / main merge | None |
+| APK / Stage 4 / main merge | No APK/main merge; independent Stage 4 demo foundation deployed |
 
 ## Required next inputs and tests
 
-An approved TURN deployment/provider with `TURN_URLS` and coturn-compatible `TURN_SHARED_SECRET` is needed. No TURN host or account was invented. A Firebase/FCM project configuration and scoped service-account credentials are needed to activate and verify the implemented push path. Do not paste long-term secrets into source or reports.
+Production TURN is now supplied through the user's Cloudflare app. A Firebase/FCM project configuration and scoped service-account credentials are still needed to activate and verify the implemented background push path. Keep long-term secrets in service variables, outside source and reports.
 
 Once configured, authorize two devices via a one-use invite; test accept/reject/hangup/mute on independent networks, verify no microphone use after cancellation (including hangup during accept), check live history, wired/Bluetooth routing, phone interruption, app background, notification denial and process death on Android API 26 and 35+. These tests cannot be replaced by successful compilation or Chromium tone transport.
 

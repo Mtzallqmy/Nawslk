@@ -33,7 +33,7 @@ Server message contents use authenticated encryption; local Room content is priv
 
 ## Open real-service gates
 
-- `/health` still reports `turnConfigured=false`, `pushConfigured=false`; approved production TURN and Firebase configuration are absent/unready. FCM code/fixtures and CI TURN do not prove live incoming delivery to an Android phone.
+- Updated after this demo checkpoint: Cloudflare TURN is activated and live UDP/TCP/TLS audio passed; `/health` reports `turnConfigured=true`, `pushConfigured=false`. See TURN_CLOUDFLARE_ACCEPTANCE.md. Firebase and actual background incoming delivery to Android remain unverified.
 - Physical Android microphone, headset/Bluetooth, phone interruption, process death and OEM background behavior remain device acceptance tasks. Robolectric and browser tests are scoped evidence.
 - SMS/voice number provisioning, real sending/receiving and vendor-specific signature adapters need an approved licensed provider account, documented rights and explicit cost approval. The generic licensed adapter stays disabled; no real number or SMS delivery is claimed.
 
