@@ -1,14 +1,14 @@
 package com.nawslk.app.messaging
 
 import androidx.room.withTransaction
-import com.nawslk.app.calls.SignalingClient
+import com.nawslk.app.calls.JsonApi
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.util.UUID
 
 /** Offline-first drafts/history; real SMS is guarded independently from demo synchronization. */
-class MessagesRepository(private val db: MessagesDatabase,val accountKey: String,private val api: SignalingClient?) {
+class MessagesRepository(private val db: MessagesDatabase,val accountKey: String,private val api: JsonApi?) {
     val conversations=db.dao().conversations(accountKey)
     private val syncLock=Mutex()
     private val draftLock=Mutex()
@@ -66,7 +66,7 @@ class MessagesRepository(private val db: MessagesDatabase,val accountKey: String
         pull(client)
         completed
     }
-    private suspend fun pull(client: SignalingClient) {
+    private suspend fun pull(client: JsonApi) {
         var before="0"
         var pages=0
         do {

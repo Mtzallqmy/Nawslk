@@ -10,12 +10,14 @@ import java.net.URL
  * Authenticated HTTP signaling transport. Media transport is a separate WebRTC component.
  * Server currently supports only registered participants.
  */
+interface JsonApi { suspend fun request(method: String,path: String,body: JSONObject? = null): JSONObject }
+
 class SignalingClient(
     private val tokenProvider: () -> String?,
     private val baseUrl: String = "https://nawslk-api-production.up.railway.app"
-) {
+) : JsonApi {
     init { require(baseUrl.startsWith("https://")) }
-    suspend fun request(method: String, path: String, body: JSONObject? = null): JSONObject =
+    override suspend fun request(method: String, path: String, body: JSONObject?): JSONObject =
         withContext(Dispatchers.IO) {
             val token = tokenProvider()
             if (path != "/v1/devices/redeem") requireNotNull(token) { "Device not connected to server" }

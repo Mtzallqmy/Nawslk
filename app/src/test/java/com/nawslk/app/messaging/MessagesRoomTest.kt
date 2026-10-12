@@ -2,6 +2,9 @@ package com.nawslk.app.messaging
 
 import android.app.Application
 import android.content.Context
+import com.nawslk.app.calls.JsonApi
+import org.json.JSONObject
+import org.json.JSONArray
 import androidx.room.Room
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.async
@@ -67,4 +70,31 @@ class MessagesRoomTest {
         assertEquals("draft",db.dao().conversation("conversation","account")?.draftText)
         db.dao().deleteConversation("conversation","account");assertNull(db.dao().message("message","account"))
     }
+    @Test(timeout=30000) fun failedSyncDoesNotClaimSentAndRetryPreservesIdempotencyKey()=runBlocking {
+        val db=open();val posted=mutableListOf<String>();var fail=true
+        val transport=object : JsonApi {
+            override suspend fun request(method: String,path: String,body: JSONObject?): JSONObject {
+                if(path=="/v1/me")return JSONObject().put("ownerId","account")
+                if(path=="/v1/conversations" && method=="POST")return JSONObject()
+                if(path.startsWith("/v1/conversations?") && method=="GET")return JSONObject().put("conversations",JSONArray()).put("nextCursor",JSONObject.NULL)
+                if(path.endsWith("/messages") && method=="POST") {
+                    posted.add(body!!.getString("idempotencyKey"))
+                    if(fail)throw java.io.IOException("offline fixture")
+                    return JSONObject().put("mode","DEMO").put("simulated",true).put("status","SENT").put("provider_reference","demo:confirmed")
+                }
+                error("Unexpected fixture route")
+            }
+        }
+        val repository=MessagesRepository(db,"account",transport)
+        val conversation=repository.create("+967700000001","fixture",true)
+        val queued=repository.queue(conversation.id,"preserved")
+        assertEquals(0,repository.sync())
+        assertEquals(MessageStatus.FAILED.name,db.dao().message(queued.id,"account")?.status)
+        repository.retry(queued.id);fail=false
+        assertEquals(1,repository.sync())
+        val confirmed=db.dao().message(queued.id,"account")!!
+        assertEquals(MessageStatus.SENT.name,confirmed.status);assertTrue(confirmed.synced)
+        assertEquals(listOf(queued.idempotencyKey,queued.idempotencyKey),posted)
+    }
+
 }
