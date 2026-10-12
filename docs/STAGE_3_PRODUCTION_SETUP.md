@@ -35,4 +35,4 @@ CI uses a disposable coturn container, fixed test-only credential material, forc
 
 ## Phase ordering
 
-The supplied Stage 4 prompt was read. Stage 4 remains conditional on Stage 3 acceptance. No Stage 4 branch, messages implementation, APK or main merge is created while production call delivery and device acceptance remain unresolved.
+Stage 3 production acceptance remains conditional on live TURN/Firebase and device tests. Independent Stage 4 demo messaging work is now prepared on `stage-4-messaging-numbers` to continue implementation without pretending those external inputs are present. See STAGE_4_ACCEPTANCE.md. This does not close Stage 3, activate a telecom provider, authorize Stage 5/6 release, or package an APK.
