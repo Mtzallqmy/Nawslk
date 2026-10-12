@@ -6,3 +6,5 @@ local.properties
 *.keystore
 .env
 .idea/
+
+node_modules/

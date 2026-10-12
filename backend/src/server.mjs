@@ -1,8 +1,10 @@
 import http from 'node:http';
 import { Pool } from 'pg';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
+import { ensureDevices, authenticate, issueInvite, redeemInvite, authorizedPeer, uuid } from './devices.mjs';
+import { RateLimiter } from './limits.mjs';
 import { hashSecret, secureEqualHash, newToken, bearer, validOwnerEmail } from './auth.mjs';
-import { ensureSignalingSchema, createSession, getSession, appendSignal, listSignals } from './signaling-store.mjs';
+import { ensureSignalingSchema, createSession, getSession, appendSignal, listSignals, transitionSession } from './signaling-store.mjs';
 
 const port = Number(process.env.PORT || 3000);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
@@ -11,22 +13,38 @@ if (!process.env.DATABASE_URL || !/^[a-f0-9]{64}$/.test(bootstrapHash || '')) {
   throw new Error('DATABASE_URL and BOOTSTRAP_SECRET_SHA256 are required');
 }
 await pool.query('CREATE TABLE IF NOT EXISTS owner_device (id UUID PRIMARY KEY, email TEXT NOT NULL, token_hash TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW(), revoked_at TIMESTAMPTZ)');
+if (process.env.BOOTSTRAP_SECRET && !secureEqualHash(hashSecret(process.env.BOOTSTRAP_SECRET), bootstrapHash)) {
+  throw new Error('bootstrap_configuration_mismatch');
+}
+await ensureDevices(pool);
 await ensureSignalingSchema(pool);
+const authLimit = new RateLimiter({ max: 10 });
+const requestLimit = new RateLimiter({ max: 240 });
+const cleanup = setInterval(() => {
+  pool.query("DELETE FROM signaling_sessions WHERE expires_at < NOW() - INTERVAL '1 day'").catch(() => {});
+  pool.query("DELETE FROM device_invites WHERE expires_at < NOW() - INTERVAL '1 day'").catch(() => {});
+}, 60000).unref();
 async function send(res, status, data) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(data));
 }
 async function readBody(req) {
   let body = '';
+  let bytes = 0;
   for await (const chunk of req) {
+    bytes += chunk.length;
     body += chunk;
-    if (body.length > 8192) throw new Error('body_too_large');
+    if (bytes > 24576) throw new Error('body_too_large');
   }
   return JSON.parse(body || '{}');
 }
 const server = http.createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
+    const publicAuth = path === '/v1/bootstrap' || path === '/v1/devices/redeem';
+    // Socket identity cannot be spoofed via arbitrary Forwarded headers. A shared ingress
+    // bucket may be restrictive behind Railway; identity limiter is separate after auth.
+    if (publicAuth && !authLimit.allow(req.socket.remoteAddress || 'ingress')) return send(res,429,{error:'rate_limited'});
     if (req.method === 'GET' && path === '/health') {
       await pool.query('SELECT 1');
       return send(res, 200, { status: 'ok', database: 'connected' });
@@ -58,53 +76,84 @@ const server = http.createServer(async (req, res) => {
         throw error;
       } finally { client.release(); }
     }
-    if (req.method === 'GET' && path === '/v1/me') {
-      const token = bearer(req.headers.authorization);
-      if (!token) return send(res, 401, { error: 'unauthorized' });
-      const result = await pool.query('SELECT id,email,token_hash FROM owner_device WHERE revoked_at IS NULL');
-      const owner = result.rows.find(row => secureEqualHash(row.token_hash, hashSecret(token)));
-      if (!owner) return send(res, 401, { error: 'unauthorized' });
-      return send(res, 200, { deviceId: owner.id, email: owner.email });
+    if (req.method === 'POST' && path === '/v1/devices/redeem') {
+      const { invite, label } = await readBody(req);
+      return send(res,201,await redeemInvite(pool,invite,label));
     }
-    if (path.startsWith('/v1/calls/')) {
-      const token = bearer(req.headers.authorization);
-      if (!token) return send(res, 401, { error: 'unauthorized' });
-      const owners = await pool.query('SELECT id,token_hash FROM owner_device WHERE revoked_at IS NULL');
-      const owner = owners.rows.find(row => secureEqualHash(row.token_hash, hashSecret(token)));
-      if (!owner) return send(res, 401, { error: 'unauthorized' });
+    if (path.startsWith('/v1/')) {
+      const owner = await authenticate(pool,bearer(req.headers.authorization));
+      if (!owner) return send(res,401,{error:'unauthorized'});
+      if (!requestLimit.allow(owner.id)) return send(res,429,{error:'rate_limited'});
       const participantId = owner.id;
+      if (req.method === 'GET' && path === '/v1/me') return send(res,200,{deviceId:owner.id,ownerId:owner.owner_id,email:owner.email,isOwner:owner.is_owner});
+      if (req.method === 'POST' && path === '/v1/devices/invites') {
+        if (!owner.is_owner) return send(res,403,{error:'forbidden'});
+        return send(res,201,await issueInvite(pool,owner.id));
+      }
+      if (req.method === 'GET' && path === '/v1/devices') {
+        const result = await pool.query(`SELECT id,label FROM trusted_devices WHERE owner_id=$1 AND revoked_at IS NULL
+          UNION ALL SELECT id,'المالك' AS label FROM owner_device WHERE id=$1 AND revoked_at IS NULL`,[owner.owner_id]);
+        return send(res,200,{devices:result.rows});
+      }
+      const revoke = /^\/v1\/devices\/([0-9a-f-]{36})$/.exec(path);
+      if (req.method === 'DELETE' && revoke) {
+        if (!uuid(revoke[1])) return send(res,400,{error:'invalid_device'});
+        if (!owner.is_owner && revoke[1] !== owner.id) return send(res,403,{error:'forbidden'});
+        const revoked = await pool.query('UPDATE trusted_devices SET revoked_at=NOW() WHERE id=$1 AND owner_id=$2 RETURNING id',[revoke[1],owner.owner_id]);
+        if (!revoked.rowCount) return send(res,404,{error:'device_not_found'});
+        await pool.query("UPDATE signaling_sessions SET state='ended',end_reason='device_revoked' WHERE caller_id=$1 OR callee_id=$1",[revoke[1]]);
+        return send(res,200,{status:'revoked'});
+      }
+      if (req.method === 'GET' && path === '/v1/calls/incoming') {
+        const result = await pool.query("SELECT * FROM signaling_sessions WHERE callee_id=$1 AND state='ringing' AND expires_at>NOW() ORDER BY created_at",[participantId]);
+        return send(res,200,{sessions:result.rows});
+      }
+      if (req.method === 'GET' && path === '/v1/calls/ice-config') {
+        const urls = (process.env.TURN_URLS || '').split(',').filter(Boolean);
+        if (!urls.length || !process.env.TURN_SHARED_SECRET) return send(res,503,{error:'turn_not_configured'});
+        const username = `${Math.floor(Date.now()/1000)+3600}:${owner.id}`;
+        const credential = createHmac('sha1',process.env.TURN_SHARED_SECRET).update(username).digest('base64');
+        return send(res,200,{iceServers:[{urls,username,credential}],expiresInSeconds:3600});
+      }
       if (req.method === 'POST' && path === '/v1/calls/sessions') {
         const { peerId } = await readBody(req);
-        if (typeof peerId !== 'string' || !/^[0-9a-f-]{36}$/i.test(peerId)) {
+        if (!uuid(peerId)) {
           return send(res, 400, { error: 'invalid_peer' });
         }
-        const known = await pool.query('SELECT id FROM owner_device WHERE id=$1 AND revoked_at IS NULL', [peerId]);
-        if (!known.rowCount) return send(res, 404, { error: 'peer_not_found' });
+        const known = await authorizedPeer(pool, owner, peerId);
+        if (!known) return send(res, 404, { error: 'peer_not_found' });
         if (peerId === participantId) return send(res, 400, { error: 'self_call_not_allowed' });
         return send(res, 201, await createSession(pool, participantId, peerId));
       }
-      const match = /^\/v1\/calls\/sessions\/([0-9a-f-]{36})(?:\/(signals))?$/.exec(path);
+      const match = /^\/v1\/calls\/sessions\/([0-9a-f-]{36})(?:\/(signals|accept|reject|heartbeat))?$/.exec(path);
       if (!match) return send(res, 404, { error: 'not_found' });
+      if (!uuid(match[1])) return send(res,400,{error:'invalid_session'});
       const session = await getSession(pool, match[1], participantId);
       if (!session) return send(res, 404, { error: 'session_not_found' });
       if (req.method === 'GET' && !match[2]) return send(res, 200, session);
       if (req.method === 'DELETE' && !match[2]) {
-        await pool.query("UPDATE signaling_sessions SET state='ended' WHERE id=$1", [session.id]);
+        await transitionSession(pool,session.id,participantId,'end');
         return send(res, 200, { status: 'ended' });
       }
-      if (req.method === 'POST' && match[2]) {
-        const { kind, payload } = await readBody(req);
+      if (req.method === 'POST' && ['accept','reject'].includes(match[2])) return send(res,200,await transitionSession(pool,session.id,participantId,match[2]));
+      if (req.method === 'POST' && match[2] === 'heartbeat') {
+        const result = await pool.query("UPDATE signaling_sessions SET expires_at=NOW()+INTERVAL '2 minutes' WHERE id=$1 AND state='accepted' AND expires_at>NOW() RETURNING id",[session.id]);
+        if (!result.rowCount) return send(res,409,{error:'invalid_call_state'});
+        return send(res,200,{status:'ok'});
+      }
+      if (req.method === 'POST' && match[2] === 'signals') {
+        const { kind, payload, messageId } = await readBody(req);
         try {
-          return send(res, 201, await appendSignal(pool, session, participantId, kind, payload));
+          return send(res, 201, await appendSignal(pool, session, participantId, kind, payload, messageId));
         } catch (error) {
           if (/^invalid_signal|^signal_too_large/.test(error.message)) return send(res, 400, { error: error.message });
           throw error;
         }
       }
-      if (req.method === 'GET' && match[2]) {
+      if (req.method === 'GET' && match[2] === 'signals') {
         const after = new URL(req.url, 'http://localhost').searchParams.get('after') || '0';
         if (!/^\d{1,16}$/.test(after)) return send(res, 400, { error: 'invalid_cursor' });
-        return send(res, 200, { messages: await listSignals(pool, session.id, after) });
+        return send(res, 200, { messages: await listSignals(pool, session.id, after, participantId) });
       }
       return send(res, 405, { error: 'method_not_allowed' });
     }
@@ -112,8 +161,16 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     if (error.message === 'body_too_large') return send(res, 413, { error: 'body_too_large' });
     if (error instanceof SyntaxError) return send(res, 400, { error: 'invalid_json' });
-    console.error('request failed:', error.message);
+    if (error.message === 'invalid_invite') return send(res,400,{error:'invalid_invite'});
+    if (error.message === 'forbidden') return send(res,403,{error:'forbidden'});
+    if (['participant_busy','invalid_call_state','signal_replay_conflict','signal_limit'].includes(error.message)) return send(res,409,{error:error.message});
+    if (error.message === 'session_not_found') return send(res,404,{error:'session_not_found'});
+    console.error('request_failed');
     return send(res, 500, { error: 'internal_error' });
   }
 });
 server.listen(port, '0.0.0.0');
+
+server.requestTimeout = 15000;
+server.headersTimeout = 10000;
+process.on('SIGTERM', () => { clearInterval(cleanup); server.close(() => pool.end()); });
