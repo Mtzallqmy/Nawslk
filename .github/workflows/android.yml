@@ -21,3 +21,11 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
       - name: Compile and run unit tests without packaging APK
         run: gradle :app:compileDebugKotlin :app:testDebugUnitTest --stacktrace
+      - name: Upload Room schemas and unit test reports (no APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-reports-and-room-schema
+          path: |
+            app/build/test-results/testDebugUnitTest/
+            app/schemas/

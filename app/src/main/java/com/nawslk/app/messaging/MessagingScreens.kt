@@ -110,10 +110,10 @@ private fun ColumnScope.ConversationScreen(repository: MessagesRepository,id: St
         }
     }
     OutlinedTextField(text,{value ->
-        if(value.codePointCount(0,value.length)<=1600) {text=value;scope.launch {repository.draft(id,value)}}
+        if(value.codePointCount(0,value.length)<=1600) {text=value;DraftSaver.save(repository,id,value)}
     },label={Text("اكتب رسالة — تُحفظ كمسودة")},modifier=Modifier.fillMaxWidth(),enabled=loaded && !queueing)
     Row {
-        Button(onClick={scope.launch {queueing=true;try {repository.queue(id,text);text="";onNotice("حُفظت في الانتظار. اضغط المزامنة للإرسال التجريبي.")}catch(_:Exception){onNotice("تعذر حفظ الرسالة.")}finally{queueing=false}}},enabled=!queueing && MessageRules.validBody(text)){Text("حفظ في قائمة الانتظار")}
+        Button(onClick={scope.launch {queueing=true;try {DraftSaver.flush(repository,id);repository.queue(id,text);text="";onNotice("حُفظت في الانتظار. اضغط المزامنة للإرسال التجريبي.")}catch(_:Exception){onNotice("تعذر حفظ الرسالة.")}finally{queueing=false}}},enabled=!queueing && MessageRules.validBody(text)){Text("حفظ في قائمة الانتظار")}
         TextButton(onClick={scope.launch {repository.delete(id);onDeleted();onNotice("حُذف السجل المحلي فقط. استخدم حذف الخادم لإزالة نسخته.")}}){Text("حذف محلي")}
     }
 }
